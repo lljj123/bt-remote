@@ -1,0 +1,9 @@
+[Unit]
+Description=Repair Bluetooth connectable state
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bt-connectable
+TimeoutStartSec=45

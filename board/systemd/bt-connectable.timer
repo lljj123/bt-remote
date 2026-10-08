@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Bluetooth connectability periodically
+
+[Timer]
+OnBootSec=10
+OnUnitInactiveSec=20
+AccuracySec=1
+Unit=bt-connectable.service
+
+[Install]
+WantedBy=timers.target

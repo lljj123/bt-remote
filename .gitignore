@@ -1,0 +1,35 @@
+# 敏感：认证令牌，绝不提交
+board/etc/token
+board/etc/gateway.env
+board/etc/state.json
+board/etc/netplan.bak.*
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+keystore.properties
+
+# 编译产物
+apk/*.apk
+
+# Python
+__pycache__/
+*.pyc
+backups/
+release/
+SHA256.json
+.stage/
+tools/test-classes/
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+
+# 系统
+.DS_Store
+Thumbs.db

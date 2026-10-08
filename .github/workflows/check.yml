@@ -1,0 +1,24 @@
+name: Source checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python and installer regression tests
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Shell syntax
+        run: |
+          for script in install.sh board/bin/*.sh board/etc/*.sh; do bash -n "$script"; done
+      - name: Publication hygiene
+        run: python3 tools/check_source.py
+      - name: Stage without changing host services
+        run: python3 tools/install_gateway.py --destdir .stage
+      - name: Verify staged layout
+        run: |
+          test -x .stage/usr/local/bin/bt-gateway
+          test -x .stage/usr/local/bin/bt-remote
+          test -f .stage/etc/systemd/system/bt-connectable.timer
+          test ! -e .stage/etc/bt-gateway/token

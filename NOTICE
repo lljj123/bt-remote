@@ -1,0 +1,6 @@
+bt-remote
+Copyright 2026 bt-remote contributors
+
+Original project code is licensed under the Apache License, Version 2.0.
+Vendored xterm.js, its fit addon and stylesheet retain their MIT license.
+See THIRD_PARTY_NOTICES.md and android/app/src/main/assets/vendor/LICENSE-xterm.txt.

@@ -1,0 +1,1688 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>板子遥控</title>
+<!-- xterm.js：真终端渲染（ANSI 颜色、光标控制、vim/top 这类全屏程序）。MIT 许可，文件见 vendor/ -->
+<link rel="stylesheet" href="vendor/xterm.css">
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<style>
+  :root{
+    --bg:#0b0f16; --panel:#141a24; --panel2:#1a2230; --line:#263041;
+    --text:#e6edf6; --muted:#8b9ab1; --dim:#5d6b80;
+    --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --r:12px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
+    padding:0 0 24px}
+  #app{max-width:560px;margin:0 auto;padding:0 12px}
+  h1{font-size:16px;font-weight:500;margin:0}
+  .muted{color:var(--muted)}
+  .dim{color:var(--dim)}
+
+  /* 顶栏 */
+  header{position:sticky;top:0;z-index:10;background:var(--bg);
+    padding:10px 12px 8px;margin:0 -12px 8px;border-bottom:1px solid var(--line)}
+  .bar{display:flex;align-items:center;gap:8px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
+  .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+  .dot.busy{background:var(--warn)}
+  .dot.err{background:var(--bad)}
+  .stat{font-size:12px;color:var(--muted);margin-left:auto}
+  .row2{display:flex;gap:8px;margin-top:8px}
+  select,input,button{font:inherit;color:var(--text);background:var(--panel2);
+    border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
+  select{flex:1;min-width:0}
+  button{cursor:pointer}
+  button:active{transform:scale(.97)}
+  button.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+  button.ghost{background:transparent}
+  button.danger{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#fca5a5}
+  button:disabled{opacity:.45}
+  input{width:100%}
+
+  /* 标签页 */
+  nav{display:flex;gap:4px;margin:0 -12px 12px;padding:0 12px;overflow-x:auto}
+  nav button{flex:0 0 auto;background:transparent;border:none;color:var(--muted);
+    padding:8px 10px;border-radius:9px;font-size:13px}
+  nav button.active{background:var(--panel);color:var(--text);font-weight:500}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+    padding:12px;margin-bottom:10px}
+  .card h2{font-size:13px;font-weight:500;margin:0 0 10px;color:var(--muted)}
+
+  .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px}
+  .tile .k{font-size:11px;color:var(--muted)}
+  .tile .v{font-size:19px;font-weight:500;margin-top:2px;white-space:nowrap}
+  .tile .v small{font-size:11px;font-weight:400;color:var(--muted)}
+
+  /* 进度条 */
+  .pb{height:5px;border-radius:3px;background:var(--panel2);overflow:hidden;margin-top:6px}
+  .pb i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+
+  canvas{width:100%;height:120px;display:block}
+
+  /* 列表行 */
+  .li{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line);
+    flex-wrap:wrap}
+  .li:first-of-type{border-top:none}
+  .li .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .li .sub{font-size:11px;color:var(--muted)}
+  .pill{font-size:11px;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .pill.ok{background:rgba(34,197,94,.15);color:#86efac}
+  .pill.off{background:var(--panel2);color:var(--muted)}
+  .pill.bad{background:rgba(239,68,68,.15);color:#fca5a5}
+  .pill.warn{background:rgba(245,158,11,.15);color:#fcd34d}
+  /* 操作按钮单独成行，避免 5 个按钮把单元名挤没 */
+  .acts{display:flex;gap:6px;flex:1 1 100%;justify-content:flex-end;flex-wrap:wrap;margin-top:6px}
+  .acts button{padding:5px 10px;font-size:12px;border-radius:8px}
+
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:5px 0;font-weight:400}
+  th{color:var(--muted);font-size:11px}
+  td.r,th.r{text-align:right}
+  tr+tr td{border-top:1px solid var(--line)}
+
+  pre{background:#070a10;border:1px solid var(--line);border-radius:9px;padding:10px;
+    font:11px/1.55 ui-monospace,Menlo,Consolas,monospace;color:#c9d5e5;
+    max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px}
+  .kv+.kv{border-top:1px solid var(--line)}
+  .kv b{font-weight:400;color:var(--muted);flex:0 0 auto}
+  .kv span{text-align:right;word-break:break-all}
+
+  /* 弹层 */
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
+    align-items:flex-end;justify-content:center;z-index:50}
+  .sheet.show{display:flex}
+  .sheet .in{background:var(--panel);border-radius:16px 16px 0 0;width:100%;
+    max-width:560px;padding:16px;border-top:1px solid var(--line)}
+  .sheet .in h3{font-size:15px;font-weight:500;margin:0 0 12px}
+  .field{margin-bottom:10px}
+  .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+  .note{font-size:12px;color:var(--muted);background:var(--panel2);border-radius:9px;
+    padding:9px 11px;margin-bottom:10px;line-height:1.55}
+  .note.warn{color:#fcd34d;background:rgba(245,158,11,.12)}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+    background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    padding:9px 16px;border-radius:999px;font-size:13px;z-index:60;
+    opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw}
+  .toast.show{opacity:1}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="bar">
+      <span class="dot" id="dot"></span>
+      <h1 id="devName">板子遥控</h1>
+      <span class="stat" id="stat">未连接</span>
+    </div>
+    <div class="row2">
+      <select id="devSel"></select>
+      <button id="btnReload" class="ghost">刷新</button>
+      <button id="btnConn" class="pri">连接</button>
+    </div>
+    <div class="row2">
+      <input id="token" type="password" placeholder="预共享令牌（首次填写后记住）" autocomplete="off" style="flex:1;min-width:0">
+      <button id="btnAuto" class="ghost" style="flex:0 0 auto">自动连接</button>
+    </div>
+    <div class="dim" id="autoHint" style="font-size:11px;margin-top:6px"></div>
+  </header>
+
+  <nav>
+    <button data-tab="ov" class="active">概览</button>
+    <button data-tab="svc">服务</button>
+    <button data-tab="net">网络</button>
+    <button data-tab="pwr">电源</button>
+    <button data-tab="log">日志</button>
+    <button data-tab="tty">终端</button>
+  </nav>
+
+  <!-- 概览 -->
+  <section id="tab-ov">
+    <div class="tiles">
+      <div class="tile"><div class="k">CPU</div><div class="v" id="mCpu">--</div>
+        <div class="pb"><i id="bCpu"></i></div></div>
+      <div class="tile"><div class="k">内存</div><div class="v" id="mMem">--</div>
+        <div class="pb"><i id="bMem"></i></div></div>
+      <div class="tile"><div class="k">温度</div><div class="v" id="mTmp">--</div>
+        <div class="pb"><i id="bTmp"></i></div></div>
+      <div class="tile"><div class="k">磁盘</div><div class="v" id="mDsk">--</div>
+        <div class="pb"><i id="bDsk"></i></div></div>
+    </div>
+
+    <div class="card">
+      <h2>实时曲线（近 60 个采样）</h2>
+      <canvas id="chart"></canvas>
+      <div class="kv"><b>CPU</b><span id="lgCpu" class="muted">--</span></div>
+      <div class="kv"><b>内存</b><span id="lgMem" class="muted">--</span></div>
+    </div>
+
+    <div class="card">
+      <h2>设备与运行</h2>
+      <div class="kv"><b>主机名</b><span id="iHost">--</span></div>
+      <div class="kv"><b>系统</b><span id="iOs">--</span></div>
+      <div class="kv"><b>型号</b><span id="iModel">--</span></div>
+      <div class="kv"><b>运行时长</b><span id="iUp">--</span></div>
+      <div class="kv"><b>无线</b><span id="iWlan">--</span></div>
+      <div class="kv"><b>有线</b><span id="iEth">--</span></div>
+      <div class="kv"><b>负载</b><span id="iLoad">--</span></div>
+    </div>
+
+    <div class="card">
+      <h2>进程 Top</h2>
+      <table id="tblTop"><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- 服务 -->
+  <section id="tab-svc" class="hide">
+    <div class="card">
+      <h2>系统服务（白名单 5 个）</h2>
+      <button class="ghost" id="btnSvcReload" style="margin-bottom:4px">刷新</button>
+      <div id="svcList"></div>
+    </div>
+  </section>
+
+  <!-- 网络 -->
+  <section id="tab-net" class="hide">
+    <div class="card">
+      <h2>当前连接</h2>
+      <div class="kv"><b>SSID</b><span id="wSsid">--</span></div>
+      <div class="kv"><b>信号</b><span id="wSig">--</span></div>
+      <div class="kv"><b>地址</b><span id="wIp">--</span></div>
+      <div class="kv"><b>网关</b><span id="wGw">--</span></div>
+    </div>
+    <div class="card">
+      <h2>可用网络</h2>
+      <button class="ghost" id="btnScan" style="margin-bottom:10px">扫描周边</button>
+      <div id="apList"></div>
+    </div>
+    <div class="card">
+      <h2>已保存的网络</h2>
+      <button class="ghost" id="btnSavedReload" style="margin-bottom:4px">刷新</button>
+      <div id="savedList"></div>
+    </div>
+  </section>
+
+  <!-- 电源 -->
+  <section id="tab-pwr" class="hide">
+    <div class="card">
+      <h2>开关机</h2>
+      <div class="note">蓝牙无法给完全断电的板子上电（硬件限制）。这里的关机/重启是软件下发；
+        定时开机由板载 RTC 完成，真正的冷启动需要外接智能插座。</div>
+      <div class="row2"><button class="ghost" id="btnReboot" style="flex:1">重启</button>
+        <button class="danger" id="btnPoweroff" style="flex:1">关机</button></div>
+    </div>
+    <div class="card">
+      <h2>定时唤醒（RTC）</h2>
+      <div class="field"><label>唤醒时间</label>
+        <input id="rtcAt" type="datetime-local"></div>
+      <div class="field"><label>重复</label>
+        <select id="rtcRepeat">
+          <option value="none">仅一次</option>
+          <option value="daily">每天</option>
+        </select></div>
+      <div class="row2">
+        <button class="ghost" id="btnRtcGet" style="flex:1">读取当前</button>
+        <button class="pri" id="btnRtcSet" style="flex:1">设置</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section id="tab-log" class="hide">
+    <div class="card">
+      <h2>服务日志</h2>
+      <div class="field"><label>服务单元</label><input id="logUnit" value="bt-gateway.service"></div>
+      <div class="row2" style="margin-bottom:10px">
+        <input id="logLines" type="number" value="50" min="5" max="400" style="flex:0 0 90px">
+        <button class="pri" id="btnLog" style="flex:1">拉取</button>
+        <button class="ghost" id="btnFollow" style="flex:1">实时跟随</button>
+      </div>
+      <pre id="logOut">未拉取。</pre>
+    </div>
+  </section>
+
+  <!-- 终端 -->
+  <section id="tab-tty" class="hide">
+    <div class="card">
+      <h2 style="display:flex;align-items:center;gap:8px">
+        <span>终端</span>
+        <span class="ttyStat" id="ttyState">未启动</span>
+        <span class="seg" style="margin-left:auto">
+          <button id="segShell" class="active">Shell</button>
+          <button id="segProto">协议台</button>
+        </span>
+      </h2>
+
+      <!-- 真 Shell：板端 PTY（root bash）+ xterm.js -->
+      <div id="ttyShellWrap">
+        <div class="note warn hide" id="shNote"></div>
+        <div id="termWrap"></div>
+        <div class="kb" id="kbBar"></div>
+        <div class="row2" style="margin-top:8px">
+          <button class="pri" id="btnShStart" style="flex:1">启动 Shell 会话</button>
+          <button class="ghost" id="btnShClose" style="flex:1">结束会话</button>
+          <button class="ghost" id="btnShFit" style="flex:0 0 auto">适配</button>
+        </div>
+        <div class="dim" style="font-size:11px;margin-top:8px">
+          root 权限的交互式 bash，和 SSH 上去一样。点终端区域唤起键盘；
+          软键盘打不出的键（Tab、方向键、Ctrl 组合）用上面那排按钮，CTRL/ALT 是粘滞键。
+        </div>
+      </div>
+
+      <!-- 协议台：直接收发 NDJSON 帧，调试用 -->
+      <div id="ttyProtoWrap" class="hide">
+        <div class="note">直接发板端协议帧。输入 <code>sys.info</code>，或
+          <code>svc.act {"unit":"ssh.service","action":"restart","confirm":"RESTART"}</code>，
+          或整帧 <code>{"t":"cmd",...}</code>。↑/↓ 调历史。</div>
+        <pre id="ttyOut">就绪。</pre>
+        <div class="row2" style="margin-top:8px">
+          <input id="ttyIn" placeholder="命令后回车发送" autocomplete="off"
+            autocapitalize="off" spellcheck="false" style="flex:1;min-width:0">
+          <button class="pri" id="btnTtySend" style="flex:0 0 auto">发送</button>
+          <button class="ghost" id="btnTtyClear" style="flex:0 0 auto">清屏</button>
+        </div>
+        <div class="row2" id="ttyQuick" style="flex-wrap:wrap;margin-top:8px"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- 连接 WiFi 弹层 -->
+<div class="sheet" id="shWifi">
+  <div class="in">
+    <h3>连接到 <span id="shSsid" class="muted"></span></h3>
+    <div class="note warn">切换 WiFi 时控制链路走蓝牙，不受影响。若新网络 30 秒内连不上，
+      板子会自动还原到原来的配置。</div>
+    <div class="field"><label>密码（开放网络留空）</label>
+      <input id="shPsk" type="password" autocomplete="off"></div>
+    <div class="row2">
+      <button class="ghost" id="shCancel" style="flex:1">取消</button>
+      <button class="pri" id="shOk" style="flex:1">连接</button>
+    </div>
+  </div>
+</div>
+
+<!-- 破坏性操作确认 -->
+<div class="sheet" id="shConfirm">
+  <div class="in">
+    <h3 id="cfTitle">确认</h3>
+    <div class="note warn" id="cfMsg"></div>
+    <div class="field"><label>请输入 <code id="cfWord"></code> 以确认</label>
+      <input id="cfInput" autocomplete="off"></div>
+    <div class="row2">
+      <button class="ghost" id="cfCancel" style="flex:1">取消</button>
+      <button class="danger" id="cfOk" style="flex:1">确定执行</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+
+/* ============ 桥接层：原生 or 演示 ============ */
+const isNative = typeof window.AndroidBt !== "undefined";
+const native = {
+  supported: () => AndroidBt.isSupported(),
+  enabled: () => AndroidBt.isEnabled(),
+  devices: () => { try { return JSON.parse(AndroidBt.devices()); } catch (e) { return []; } },
+  connect: (mac) => AndroidBt.connect(mac),
+  send: (line) => AndroidBt.send(line),
+  /* 裸相位（终端）用：base64 过的原始字节，见 shellSend() */
+  sendRaw: (b64) => AndroidBt.sendRaw(b64),
+  sendResize: (cols, rows) => AndroidBt.sendResize(cols, rows),
+  sendClose: () => AndroidBt.sendClose(),
+  disconnect: () => AndroidBt.disconnect(),
+  demo: false
+};
+
+/* ============ 状态 ============ */
+let token = localStorage.getItem("btr.token") || "";
+if (isNative) {
+  const saved = AndroidBt.getToken();
+  if (saved) { token = saved; localStorage.removeItem("btr.token"); }
+  else if (token && AndroidBt.setToken(token)) localStorage.removeItem("btr.token");
+}
+let connected = false, connecting = false, authed = false, devLabel = "板子遥控";
+let termProtocol = "", shellStarting = false, streamEpoch = 0;
+let pollTimer = null, infoTimer = null, subOk = false;
+let wantConnected = false, retryTimer = null, retryStep = 0;
+let following = false, followUnit = "";
+let devInfo = null, devInfoAt = 0;
+const cpuHist = [], memHist = [];
+let lastMetrics = null;
+
+const RETRY_DELAYS = [2000, 4000, 8000, 15000, 30000];
+
+/* ---- 自动连接：记住上次设备，下次打开 App 自动连 ---- */
+let autoOn = (localStorage.getItem("btr.auto") || "1") === "1";
+let lastMac = localStorage.getItem("btr.mac") || "";
+let autoTried = false;                 // 每次启动只自动试一次
+/* -1 = 一直退避重连（手动连接）；自动连接时给个上限，免得白耗电 */
+let retryAllowed = -1;
+
+/* ---- 终端 ---- */
+let ttyHist = [], ttyHi = -1;
+
+/* 板端错误码 → 人话（板端 msg 是英文，这里补中文提示） */
+const ERR_HINT = {
+  E_JSON: "请求不是合法 JSON",
+  E_TOO_LONG: "请求超过 4096 字节",
+  E_AUTH: "令牌错误或尚未鉴权",
+  E_NOCMD: "板端不认识这条命令",
+  E_ARGS: "参数不合法",
+  E_PERM: "该服务不在白名单内",
+  E_CONFIRM: "危险动作缺少正确的 confirm 字段",
+  E_SVC: "systemctl 操作失败",
+  E_NET: "网络操作失败",
+  E_NETPLAN: "netplan 配置失败",
+  E_WIFI_FAIL: "新网络连不上，已自动回滚",
+  E_SCAN: "WiFi 扫描失败",
+  E_IN_USE: "该网络正在使用中",
+  E_RTC: "RTC 操作失败",
+  E_LOG: "日志读取失败",
+  E_BUSY: "板端正忙（已有终端任务在跑），稍后再试",
+  E_TIMEOUT: "板端执行超时",
+  E_INTERNAL: "板端内部错误"
+};
+function humanErr(raw) {
+  if (!raw) return "未知错误";
+  const m = /^([A-Z][A-Z_]+)/.exec(String(raw));
+  const hint = m ? ERR_HINT[m[1]] : null;
+  return hint ? (hint + "（" + raw + "）") : String(raw);
+}
+
+$("#token").value = token;
+$("#token").addEventListener("change", e => {
+  token = e.target.value.trim();
+  if (isNative) {
+    if (AndroidBt.setToken(token)) localStorage.removeItem("btr.token");
+    else toast("令牌保存失败，本次可用，重启后需重新填写");
+  } else localStorage.setItem("btr.token", token);
+});
+
+/* ============ 协议 ============ */
+let nextId = 1;
+const pending = new Map();
+
+function raw(line) {
+  if (rawOn || shellStarting) throw new Error("终端正在占用连接，请先结束会话");
+  if (native.send(line) === false) throw new Error("发送失败，连接不可用或协议忙碌");
+}
+
+function feed(line) {
+  let m;
+  try { m = JSON.parse(line); } catch (e) { log("[非 JSON] " + line); return; }
+
+  if (m.t === "hello") {
+    termProtocol = m.term_protocol || "";
+    devLabel = m.name || m.dev || "板子";
+    $("#devName").textContent = devLabel;
+    if (!token) {
+      toast("请先填写预共享令牌");
+      setConn("err", "需要令牌");
+      wantConnected = false;        // 别触发自动重连
+      native.disconnect();          // 主动退，别等板子 10 秒超时踢
+      onState("disconnected", "");
+      return;
+    }
+    try { raw(JSON.stringify({ t: "auth", token: token })); }
+    catch (e) { native.disconnect(); onState("error", e.message); }
+    return;
+  }
+  if (m.t === "auth") {
+    if (m.ok) {
+      resetShell();
+      authed = true; connected = true; wantConnected = true; retryStep = 0;
+      $("#btnConn").textContent = "断开";
+      setConn("on", "已连接");
+      toast("鉴权通过");
+      startStream();
+      loadSysInfo();
+      loadOverview();
+      refreshServices();
+      /* 每次重建连接，终端相位都是干净的（裸相位不会跨连接存活） */
+    } else {
+      authed = false;
+      wantConnected = false;        // 令牌错就别自动重连，否则连错 3 次会被板子锁 60 秒
+      const fails = (typeof m.fails === "number") ? "（已错 " + m.fails + " 次，共 3 次会锁 60 秒）" : "";
+      setConn("err", "令牌错误");
+      toast("令牌错误" + fails + (m.msg ? "：" + m.msg : ""));
+      native.disconnect();
+      onState("disconnected", "");
+    }
+    return;
+  }
+  if (m.t === "res") {
+    ttyEcho(line);                 // 协议模式下把回复原文打到终端
+    const p = pending.get(m.id);
+    if (p) {
+      pending.delete(m.id);
+      m.ok ? p.res(m.data || {}) : p.rej(new Error(humanErr(m.err + (m.msg ? "：" + m.msg : ""))));
+    }
+    return;
+  }
+  if (m.t === "pong") return;
+  if (m.t === "ev") { onEvent(m); return; }
+  log("[未知帧] " + line);
+}
+
+/** timeoutMs 可按命令覆盖——wifi.connect 实测 ~42s，必须给足 */
+function send(name, args, timeoutMs) {
+  const id = nextId++;
+  return new Promise((res, rej) => {
+    pending.set(id, { res: res, rej: rej });
+    try {
+      raw(JSON.stringify({ t: "cmd", id: id, name: name, args: args || {} }));
+      if (name === "term.shell") shellStarting = true;
+    } catch (e) { pending.delete(id); rej(e); return; }
+    setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); rej(new Error("请求超时")); }
+    }, timeoutMs || 20000);
+  });
+}
+
+function clearPending() {
+  pending.forEach(p => { try { p.rej(new Error("连接已断开")); } catch (e) { } });
+  pending.clear();
+}
+
+function onEvent(m) {
+  if (m.name === "metrics") { renderMetrics(m.data); return; }
+  if (m.name === "alert") { toast("[" + m.data.level + "] " + m.data.msg); return; }
+  if (m.name === "svc") { refreshServices(); return; }
+  if (m.name === "log") { appendLog(m.data); return; }
+  /* 板端已 fork 出 PTY 并切到裸字节相位，之后所有字节都直接进终端 */
+  if (m.name === "term.ready") {
+    shellStarting = false;
+    stopStream();
+    rawOn = true;
+    ttyState(authed ? "已就绪" : "已就绪");
+    shNote("");
+    paintShellBtns();
+    if (termInited) { try { term.focus(); } catch (e) { } }
+    return;
+  }
+  if (m.name === "term.exit") {
+    resetShell();
+    ttyState("会话已结束");
+    if (connected && authed) startStream();
+    return;
+  }
+}
+
+/* 优先用订阅推送，失败则退回轮询 */
+async function startStream() {
+  stopStream();
+  const epoch = streamEpoch;
+  if (rawOn || shellStarting || !authed) return;
+  subOk = false;
+  try {
+    await send("sys.subscribe", { interval_s: 2, what: ["metrics", "alerts"] });
+    subOk = true;
+  } catch (e) {
+    subOk = false;
+    toast("板端不支持订阅，改用轮询");
+  }
+  if (epoch !== streamEpoch || rawOn || shellStarting || !authed) return;
+  pollTimer = setInterval(() => {
+    if (!subOk && connected && authed && !rawOn && !shellStarting) {
+      send("sys.metrics").then(renderMetrics).catch(() => {});
+    }
+  }, 2000);
+  infoTimer = setInterval(() => {
+    if (connected && authed && !rawOn && !shellStarting) {
+      send("dev.ping").catch(() => {});
+      if (Date.now() - devInfoAt >= 60000) loadSysInfo();
+    }
+  }, 20000);
+  if (!subOk) send("sys.metrics").then(renderMetrics).catch(() => {});
+}
+
+function stopStream() {
+  streamEpoch++;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (infoTimer) { clearInterval(infoTimer); infoTimer = null; }
+}
+
+/* ============ 连接 ============ */
+function setConn(kind, text) {
+  const d = $("#dot");
+  d.className = "dot" + (kind === "on" ? " on" : kind === "busy" ? " busy" : kind === "err" ? " err" : "");
+  $("#stat").textContent = text;
+}
+
+function onState(state, info) {
+  if (state === "connecting") {
+    connecting = true;
+    setConn("busy", "连接中");
+  } else if (state === "connected") {
+    connecting = false;
+    connected = true; setConn("busy", "已连接，握手…");
+  } else if (state === "disconnected" || state === "error") {
+    connecting = false;
+    connected = false; authed = false;
+    stopStream(); clearPending(); stopFollow();
+    resetShell();                 // 裸相位不会跨连接存活，必须复位
+    if (state === "error") {
+      setConn("err", "连接失败"); toast(info);
+      // 多行 = 连接诊断详情，用浮层留住，别让它 2 秒就消失
+      if (info.indexOf("\n") >= 0) showDiag(info);
+    }
+    else { setConn("", "已断开"); }
+    $("#btnConn").textContent = "连接";
+    scheduleRetry();               // 板子重启约 10~20 秒回来，退避重连
+  }
+}
+
+function scheduleRetry() {
+  if (!wantConnected || retryTimer) return;
+  /* 自动连接不无限重试：失败几次就停手，改成手动点击，避免后台白耗电 */
+  if (retryAllowed >= 0 && retryStep >= retryAllowed) {
+    wantConnected = false;
+    setConn("err", "自动连接失败");
+    toast("自动连接失败，点「连接」手动重试");
+    return;
+  }
+  const d = RETRY_DELAYS[Math.min(retryStep, RETRY_DELAYS.length - 1)];
+  retryStep++;
+  setConn("busy", "已断开，" + Math.round(d / 1000) + " 秒后重连");
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!wantConnected) return;
+    const mac = $("#devSel").value;
+    if (mac) native.connect(mac);
+    else { wantConnected = false; setConn("", "已断开"); }
+  }, d);
+}
+
+function cancelRetry() {
+  wantConnected = false; retryStep = 0;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+}
+
+window.onBtLine = feed;
+window.onBtState = function (jsonStr) {
+  try { const o = JSON.parse(jsonStr); onState(o.state, o.info); } catch (e) { }
+};
+
+function loadDevices() {
+  const sel = $("#devSel");
+  const keep = sel.value;
+  sel.innerHTML = "";
+  const list = native.devices();
+  if (!list.length) {
+    const o = document.createElement("option");
+    o.textContent = isNative ? "没有已配对设备（先去系统蓝牙里配对）" : "演示设备";
+    o.value = "";
+    sel.appendChild(o);
+    return;
+  }
+  list.forEach(d => {
+    const o = document.createElement("option");
+    o.value = d.mac;
+    o.textContent = d.name + "  ·  " + d.mac.slice(-8);
+    sel.appendChild(o);
+  });
+  if (keep) { try { sel.value = keep; } catch (e) { } }
+  else if (!sel.value && lastMac) { try { sel.value = lastMac; } catch (e) { } }
+}
+
+/** 下拉框里有没有这台设备（用于自动连接前的校验） */
+function selectMac(mac) {
+  const sel = $("#devSel");
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === mac) { sel.selectedIndex = i; return true; }
+  }
+  return false;
+}
+
+$("#btnReload").onclick = () => { loadDevices(); toast("已重新读取已配对设备"); };
+
+/** 统一的发起连接入口。auto=true 表示这是自动连接（限制重试次数） */
+function startConnect(mac, auto) {
+  connecting = true;
+  retryStep = 0;
+  retryAllowed = auto ? 3 : -1;
+  wantConnected = true;
+  lastMac = mac;
+  localStorage.setItem("btr.mac", mac);
+  $("#btnConn").textContent = "断开";
+  native.connect(mac);
+}
+
+$("#btnConn").onclick = () => {
+  if (connected || connecting || retryTimer) {
+    cancelRetry();
+    native.disconnect();
+    onState("disconnected", "");
+    return;
+  }
+  if (!isNative) { toast("浏览器里是演示模式，装到手机上才连真设备"); return; }
+  if (!token) { toast("请先填写预共享令牌"); return; }
+  if (!native.enabled()) { toast("请先在系统设置里打开蓝牙"); return; }
+  const mac = $("#devSel").value;
+  if (!mac) { toast("请先选择已配对设备（可点「刷新」）"); return; }
+  startConnect(mac, false);
+};
+
+/* ---- 自动连接开关 ---- */
+function paintAuto() {
+  $("#btnAuto").textContent = autoOn ? "自动连接：开" : "自动连接：关";
+  $("#btnAuto").style.color = autoOn ? "var(--ok)" : "var(--muted)";
+  const d = lastMac ? ("上次设备 " + lastMac.slice(-8)) : "还没连过，先手动连一次";
+  $("#autoHint").textContent = (autoOn ? "打开 App 会自动连：" : "自动连接已关闭 · ") + d;
+}
+$("#btnAuto").onclick = () => {
+  autoOn = !autoOn;
+  localStorage.setItem("btr.auto", autoOn ? "1" : "0");
+  paintAuto();
+  toast(autoOn ? "已开启：打开 App 自动连接" : "已关闭自动连接");
+};
+$("#devSel").addEventListener("change", e => {
+  if (e.target.value) { lastMac = e.target.value; localStorage.setItem("btr.mac", lastMac); paintAuto(); }
+});
+
+/** App 启动时的自动连接：只在「有令牌 + 有上次设备 + 该设备仍在配对列表」时动手 */
+function bootAuto() {
+  paintAuto();
+  if (!autoOn || autoTried) return;
+  autoTried = true;
+  if (!token) { setConn("", "待填令牌"); return; }
+  if (!lastMac) { setConn("", "待选设备"); return; }
+  if (!native.enabled()) { setConn("err", "蓝牙未开启"); return; }
+  loadDevices();
+  if (!selectMac(lastMac)) {
+    setConn("err", "上次的设备不在配对列表");
+    toast("没找到上次连接的设备（" + lastMac.slice(-8) + "），请重新配对或手动选择");
+    return;
+  }
+  setConn("busy", "自动连接中…");
+  /* 稍等一下再发起：蓝牙栈刚被 App 唤起时立刻建链容易失败 */
+  setTimeout(() => { if (!connected && !retryTimer) startConnect(lastMac, true); }, 900);
+}
+
+/* ============ 渲染：概览 ============ */
+function pct(a, b) { return b > 0 ? Math.round(a / b * 100) : 0; }
+function fmtKB(kb) {
+  if (kb >= 1048576) return (kb / 1048576).toFixed(1) + "G";
+  if (kb >= 1024) return Math.round(kb / 1024) + "M";
+  return Math.round(kb) + "K";
+}
+
+/* uptime_s 只在 sys.info 里，metrics 里没有 —— 所以单独拉一次并本地累加 */
+async function loadSysInfo() {
+  if (!authed) return;
+  try {
+    devInfo = await send("sys.info");
+    devInfoAt = Date.now();
+    $("#iHost").textContent = devInfo.hostname || "--";
+    $("#iOs").textContent = [devInfo.os, devInfo.kernel].filter(Boolean).join(" · ") || "--";
+    $("#iModel").textContent = devInfo.model || "--";
+  } catch (e) { }
+}
+function uptimeSec() {
+  if (!devInfo) return null;
+  return (devInfo.uptime_s || 0) + Math.floor((Date.now() - devInfoAt) / 1000);
+}
+
+function renderMetrics(d) {
+  if (!d) return;
+  lastMetrics = d;
+
+  const cpu = d.cpu || {}, mem = d.mem || {}, disk = d.disk || {};
+  const memPct = pct(mem.used_kb, mem.total_kb);
+  const dskPct = pct(disk.root_used_kb, disk.root_total_kb);
+
+  $("#mCpu").innerHTML = Math.round(cpu.pct || 0) + "<small>%</small>";
+  $("#bCpu").style.width = (cpu.pct || 0) + "%";
+  $("#bCpu").style.background = cpu.pct > 85 ? "var(--bad)" : cpu.pct > 60 ? "var(--warn)" : "var(--accent)";
+
+  $("#mMem").innerHTML = memPct + "<small>%</small>";
+  $("#bMem").style.width = memPct + "%";
+  $("#bMem").style.background = memPct > 85 ? "var(--bad)" : memPct > 60 ? "var(--warn)" : "var(--accent)";
+
+  const t = cpu.temp_c || 0;
+  $("#mTmp").innerHTML = Math.round(t) + "<small>°</small>";
+  $("#bTmp").style.width = Math.min(100, t) + "%";
+  $("#bTmp").style.background = t > 75 ? "var(--bad)" : t > 60 ? "var(--warn)" : "var(--ok)";
+
+  $("#mDsk").innerHTML = dskPct + "<small>%</small>";
+  $("#bDsk").style.width = dskPct + "%";
+
+  push(cpuHist, cpu.pct || 0);
+  push(memHist, memPct);
+  drawChart();
+
+  $("#lgCpu").textContent = Math.round(cpu.pct || 0) + "% · " + (cpu.mhz || 0) + " MHz";
+  $("#lgMem").textContent = fmtKB(mem.used_kb || 0) + " / " + fmtKB(mem.total_kb || 0);
+
+  const w = (d.net && d.net.wlan0) || {}, e0 = (d.net && d.net.end0) || {};
+  $("#iWlan").textContent = w.ssid
+    ? (w.ssid + " · " + w.signal_dbm + " dBm") : "--";
+  $("#iEth").textContent = e0.state || "--";
+  $("#iLoad").textContent = [cpu.load1, cpu.load5, cpu.load15].map(x => (x || 0).toFixed(2)).join("  ");
+  const upSec = uptimeSec();
+  $("#iUp").textContent = upSec == null ? "--" : up(upSec);
+
+  const tb = $("#tblTop").querySelector("tbody");
+  tb.innerHTML = "";
+  (d.top || []).slice(0, 8).forEach(p => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td>" + esc(p.name) + "</td><td class='r muted'>" + Math.round(p.pid) +
+      "</td><td class='r'>" + (p.cpu_pct || 0).toFixed(1) + "%</td><td class='r muted'>" +
+      (p.mem_pct || 0).toFixed(1) + "%</td>";
+    tb.appendChild(tr);
+  });
+}
+
+function push(a, v) { a.push(v); if (a.length > 60) a.shift(); }
+
+function drawChart() {
+  const c = $("#chart");
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = 120;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  g.strokeStyle = "#263041"; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = Math.round(h * i / 4) + .5;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+  }
+
+  const line = (arr, color) => {
+    if (arr.length < 2) return;
+    g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+    arr.forEach((v, i) => {
+      const x = w * i / (arr.length - 1);
+      const y = h - (Math.max(0, Math.min(100, v)) / 100) * h;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+  };
+  line(memHist, "#22c55e");
+  line(cpuHist, "#3b82f6");
+}
+
+function up(s) {
+  if (s == null) return "--";
+  s = Math.max(0, Math.floor(s));
+  const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), mm = Math.floor(s % 3600 / 60);
+  return (d ? d + "天 " : "") + hh + "小时 " + mm + "分";
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, ch =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+
+/* ============ 渲染：服务 ============ */
+/* 板端 DANGEROUS_SVC = {("ssh.service","stop"),("ssh.service","disable")}
+   confirm 必须严格等于 action 的大写形式 */
+const SVC_ACTIONS = ["start", "stop", "restart", "enable", "disable"];
+const ACT_LABEL = { start: "启动", stop: "停止", restart: "重启", enable: "自启", disable: "禁自启" };
+const DANGEROUS = { "ssh.service": ["stop", "disable"] };
+
+async function refreshServices() {
+  if (!authed) return;
+  try {
+    const list = await send("svc.list");
+    const box = $("#svcList");
+    box.innerHTML = "";
+    (list || []).forEach(u => {
+      const div = document.createElement("div");
+      div.className = "li";
+      const cls = u.active === "active" ? "ok" : (u.active === "failed" ? "bad" : "off");
+      let acts = "";
+      SVC_ACTIONS.forEach(a => {
+        acts += "<button data-u='" + esc(u.unit) + "' data-a='" + a + "'>" + ACT_LABEL[a] + "</button>";
+      });
+      div.innerHTML =
+        "<div class='nm'>" + esc(u.unit) +
+        (u.desc ? "<div class='sub'>" + esc(u.desc) + "</div>" : "") + "</div>" +
+        "<span class='pill " + cls + "'>" + esc(u.active) + "</span>" +
+        "<span class='pill " + (u.enabled === "enabled" ? "ok" : (u.enabled === "masked" ? "bad" : "off")) + "'>" +
+        esc(u.enabled) + "</span>" +
+        "<span class='acts'>" + acts + "</span>";
+      box.appendChild(div);
+    });
+    box.querySelectorAll("button").forEach(b => {
+      b.onclick = async () => {
+        const u = b.dataset.u, a = b.dataset.a;
+        if ((DANGEROUS[u] || []).indexOf(a) >= 0) {
+          const tip = a === "stop"
+            ? "停掉 SSH 会让你暂时无法用 SSH 登板子（蓝牙这条链路不受影响）。"
+            : "禁用 SSH 自启后，板子下次重启就不会自动开 SSH 了。";
+          if (!await confirmWord(a + " " + u, tip, a.toUpperCase())) return;
+        }
+        b.disabled = true;
+        try {
+          await send("svc.act", { unit: u, action: a, confirm: a.toUpperCase() });
+          toast(u + " → " + ACT_LABEL[a] + " 已下发");
+        } catch (e) { toast("失败：" + e.message); }
+        b.disabled = false;
+        refreshServices();
+      };
+    });
+  } catch (e) { toast("服务列表获取失败：" + e.message); }
+}
+$("#btnSvcReload").onclick = refreshServices;
+
+/* ============ 渲染：网络 ============ */
+async function loadNetwork() {
+  if (!authed) return;
+  try {
+    const s = await send("net.wifi.status");
+    $("#wSsid").textContent = s.ssid || "--";
+    $("#wSig").textContent = s.signal_dbm ? s.signal_dbm + " dBm" : "--";
+    $("#wIp").textContent = s.ip || "--";
+    $("#wGw").textContent = s.gw || "--";
+  } catch (e) { toast("网络状态获取失败：" + e.message); }
+}
+
+async function loadSaved() {
+  if (!authed) return;
+  const box = $("#savedList");
+  try {
+    const list = await send("net.wifi.saved");
+    box.innerHTML = "";
+    if (!list || !list.length) {
+      box.innerHTML = "<div class='dim' style='font-size:12px'>（暂无已保存网络）</div>";
+      return;
+    }
+    list.forEach(w => {
+      const div = document.createElement("div");
+      div.className = "li";
+      div.innerHTML = "<div class='nm'>" + esc(w.ssid) +
+        "<div class='sub'>" + (w.has_psk ? "已保存密码" : "开放 / 无密码") + "</div></div>" +
+        "<span class='acts'><button class='danger'>忘记</button></span>";
+      div.querySelector("button").onclick = async () => {
+        if (!await confirmWord("忘记网络", "将从板子上删除「" + w.ssid + "」的保存记录与密码。", "FORGET")) return;
+        try { await send("net.wifi.forget", { ssid: w.ssid }); toast("已忘记 " + w.ssid); }
+        catch (e) { toast("失败：" + e.message); }
+        loadSaved();
+      };
+      box.appendChild(div);
+    });
+  } catch (e) { toast("已保存网络获取失败：" + e.message); }
+}
+$("#btnSavedReload").onclick = loadSaved;
+
+$("#btnScan").onclick = async () => {
+  if (!authed) { toast("请先连接并鉴权"); return; }
+  const b = $("#btnScan");
+  b.disabled = true; b.textContent = "扫描中…";
+  try {
+    const list = await send("net.wifi.scan", { rescan: true }, 40000);
+    const box = $("#apList");
+    box.innerHTML = "";
+    const arr = (list || []).slice().sort((x, y) => (y.signal_dbm || -99) - (x.signal_dbm || -99));
+    arr.forEach(ap => {
+      const div = document.createElement("div");
+      div.className = "li";
+      const bars = ap.signal_dbm > -55 ? "强" : ap.signal_dbm > -70 ? "中" : "弱";
+      div.innerHTML =
+        "<div class='nm'>" + esc(ap.ssid || "(隐藏)") +
+        "<div class='sub'>" + esc(ap.security || "开放") + " · " + ap.signal_dbm + " dBm · " + bars +
+        (ap.freq ? " · " + Math.round(ap.freq / 1000) + " GHz" : "") +
+        (ap.known ? " · 已保存" : "") + "</div></div>" +
+        (ap.in_use ? "<span class='pill ok'>已连接</span>" : "") +
+        "<span class='acts'><button>连接</button></span>";
+      div.querySelector("button").onclick = () => openWifi(ap);
+      box.appendChild(div);
+    });
+    if (arr.length >= 20) {
+      const n = document.createElement("div");
+      n.className = "note";
+      n.style.marginTop = "8px";
+      n.textContent = "共 " + arr.length + " 个。单帧上限 4096 字节，条目过多时板端会丢弃信号最弱的那些。";
+      box.appendChild(n);
+    }
+    if (!arr.length) box.innerHTML = "<div class='dim' style='font-size:12px'>（没扫到网络）</div>";
+  } catch (e) { toast("扫描失败：" + e.message); }
+  b.disabled = false; b.textContent = "扫描周边";
+};
+
+let wifiTarget = null;
+function openWifi(ap) {
+  wifiTarget = ap;
+  $("#shSsid").textContent = ap.ssid || "";
+  $("#shPsk").value = "";
+  $("#shWifi").classList.add("show");
+}
+$("#shCancel").onclick = () => $("#shWifi").classList.remove("show");
+$("#shOk").onclick = async () => {
+  const psk = $("#shPsk").value;
+  $("#shWifi").classList.remove("show");
+  toast("正在切换，最长等 60 秒（板端要扫描、关联、等 DHCP）…");
+  try {
+    /* 板端实测 ~42s，超时必须 >45s，这里给 60s */
+    const r = await send("net.wifi.connect", {
+      ssid: wifiTarget.ssid, psk: psk, hidden: false, timeout_s: 30
+    }, 300000);
+    if (r && r.ok) { toast("已切换到 " + wifiTarget.ssid + (r.ip ? "，" + r.ip : "")); }
+    else if (r && r.rolled_back) { toast("连不上（" + (r.err || "") + "），已自动还原到原网络"); }
+    else { toast("切换失败：" + ((r && r.err) || "未知")); }
+    loadNetwork(); loadSaved();
+  } catch (e) { toast("切换失败：" + e.message); }
+};
+
+/* ============ 渲染：电源与日志 ============ */
+$("#btnReboot").onclick = async () => {
+  if (!await confirmWord("重启板子", "板子会立即重启，蓝牙连接随之中断，约 10~20 秒后自动重连。", "REBOOT")) return;
+  try { await send("pwr.reboot", { confirm: "REBOOT" }); toast("已下发重启"); } catch (e) { toast(e.message); }
+};
+$("#btnPoweroff").onclick = async () => {
+  if (!await confirmWord("关闭板子", "板子会立即关机，之后只能靠 RTC 定时或手动上电开机。", "POWEROFF")) return;
+  try { await send("pwr.poweroff", { confirm: "POWEROFF" }); toast("已下发送关机"); } catch (e) { toast(e.message); }
+};
+$("#btnRtcGet").onclick = async () => {
+  try {
+    const r = await send("pwr.rtc.get");
+    toast(r.enabled ? ("已设定：" + r.at + "（" + r.repeat + "）") : "未设定定时唤醒");
+    if (r.enabled && r.at) {
+      $("#rtcAt").value = String(r.at).slice(0, 16);
+      $("#rtcRepeat").value = r.repeat || "none";
+    }
+  } catch (e) { toast(e.message); }
+};
+$("#btnRtcSet").onclick = async () => {
+  const v = $("#rtcAt").value;
+  if (!v) { toast("请选择时间"); return; }
+  try {
+    /* datetime-local 可能带秒，板端示例是分钟精度，这里裁到分钟 */
+    await send("pwr.rtc.set", { at: v.slice(0, 16), repeat: $("#rtcRepeat").value, enabled: true });
+    toast("定时唤醒已设置");
+  } catch (e) { toast(e.message); }
+};
+
+$("#btnLog").onclick = async () => {
+  if (!authed) { toast("请先连接并鉴权"); return; }
+  const u = $("#logUnit").value.trim();
+  const n = parseInt($("#logLines").value, 10) || 50;
+  $("#logOut").textContent = "拉取中…";
+  try {
+    const r = await send("log.tail", { unit: u, lines: n });
+    log((r.lines || []).join("\n") || "(空)");
+  } catch (e) { log("失败：" + e.message); }
+};
+
+$("#btnFollow").onclick = async () => {
+  if (!authed) { toast("请先连接并鉴权"); return; }
+  const u = $("#logUnit").value.trim();
+  if (following) {
+    try { await send("log.follow", { unit: followUnit, on: false }); } catch (e) { }
+    stopFollow();
+    toast("已停止跟随");
+    return;
+  }
+  try {
+    await send("log.follow", { unit: u, on: true });
+    following = true; followUnit = u;
+    $("#btnFollow").textContent = "停止跟随";
+    $("#logOut").textContent = "";
+    toast("已开始实时跟随 " + u);
+  } catch (e) { toast("跟随失败：" + e.message); }
+};
+
+function stopFollow() {
+  following = false; followUnit = "";
+  $("#btnFollow").textContent = "实时跟随";
+}
+
+function appendLog(d) {
+  if (!following || !d) return;
+  const box = $("#logOut");
+  const line = (d.line == null) ? JSON.stringify(d) : d.line;
+  box.textContent += (box.textContent ? "\n" : "") + "[" + (d.unit || followUnit) + "] " + line;
+  box.scrollTop = box.scrollHeight;
+}
+
+function log(t) { $("#logOut").textContent = t; }
+
+/* ============ 确认弹层 ============ */
+let cfResolve = null;
+function confirmWord(title, msg, word) {
+  $("#cfTitle").textContent = title;
+  $("#cfMsg").textContent = msg;
+  $("#cfWord").textContent = word;
+  $("#cfInput").value = "";
+  $("#shConfirm").classList.add("show");
+  return new Promise(r => { cfResolve = r; });
+}
+$("#cfCancel").onclick = () => { $("#shConfirm").classList.remove("show"); if (cfResolve) cfResolve(false); cfResolve = null; };
+$("#cfOk").onclick = () => {
+  const ok = $("#cfInput").value.trim() === $("#cfWord").textContent;
+  if (!ok) { toast("确认词不匹配"); return; }
+  $("#shConfirm").classList.remove("show");
+  if (cfResolve) cfResolve(true);
+  cfResolve = null;
+};
+
+window.onAndroidBack = function () {
+  if ($("#shConfirm").classList.contains("show")) { $("#cfCancel").onclick(); return true; }
+  if ($("#shWifi").classList.contains("show")) { $("#shCancel").onclick(); return true; }
+  return false;
+};
+
+/* ============ 标签页 ============ */
+document.querySelectorAll("nav button").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    ["ov", "svc", "net", "pwr", "log", "tty"].forEach(t => {
+      $("#tab-" + t).classList.toggle("hide", t !== b.dataset.tab);
+    });
+    if (b.dataset.tab === "svc") refreshServices();
+    if (b.dataset.tab === "net") { loadNetwork(); loadSaved(); }
+    if (b.dataset.tab === "ov") loadOverview();
+    if (b.dataset.tab === "tty") onTtyOpen();
+  };
+});
+
+async function loadOverview() {
+  if (!authed) return;
+  try { renderMetrics(await send("sys.metrics")); } catch (e) { }
+  if (!devInfo) loadSysInfo();
+}
+
+/* ============ 终端 ============ */
+/* 两种视图：
+     shell —— 真终端。板端 fork 一个 PTY 跑 root bash，链路切换成裸字节流，屏上用 xterm.js 渲染。
+              SSH 上去什么体验，这里就是什么体验（颜色、光标、vim/top 这类全屏程序都能跑）。
+     proto —— 协议台。直接收发 NDJSON 帧，调板端命令、排查协议用。 */
+let ttyKind = "shell";
+let rawOn = false;                 // 是否已进入裸字节相位
+function resetShell() {
+  rawOn = false;
+  shellStarting = false;
+  sticky = null;
+  paintShellBtns();
+  paintSticky();
+  ttyState("未启动");
+}
+let term = null, fitAddon = null, termInited = false;
+let sticky = null;                 // 粘滞修饰键：null | ctrl | alt
+let fitT = null;
+
+const TTY_QUICK_PROTO = ["sys.info", "sys.metrics", "svc.list", "net.wifi.status",
+  "net.ifaces", "pwr.rtc.get", "term.caps",
+  "log.tail {\"unit\":\"bt-gateway.service\",\"lines\":50}"];
+
+/* ---- 字节 <-> base64：JS 与原生之间只过字符串 ---- */
+function u8ToB64(u8) {
+  let s = "";
+  const CH = 0x8000;               // 分块，避免 apply 参数过多爆栈
+  for (let i = 0; i < u8.length; i += CH) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CH, u8.length)));
+  }
+  return btoa(s);
+}
+function b64ToU8(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+
+/* 裸相位下 0x01 是控制帧前缀，普通数据里的 0x01 必须写成 0x01 0x01 */
+function shellSend(u8) {
+  if (!rawOn) return;
+  if (!isNative) { demoSend(u8); return; }
+  let n = 0;
+  for (let i = 0; i < u8.length; i++) if (u8[i] === 1) n++;
+  if (n) {
+    const o = new Uint8Array(u8.length + n);
+    let k = 0;
+    for (let i = 0; i < u8.length; i++) { o[k++] = u8[i]; if (u8[i] === 1) o[k++] = 1; }
+    u8 = o;
+  }
+  native.sendRaw(u8ToB64(u8));
+}
+function shellSendText(t) { shellSend(new TextEncoder().encode(t)); }
+
+/* ---- xterm 实例延迟创建：页签隐藏时容器尺寸为 0，量不出行列 ---- */
+function initTerm() {
+  if (termInited) return;
+  /* 容器隐藏在 display:none 下尺寸是 0，xterm 量不出字体；等页签真正打开再建 */
+  if ($("#tab-tty").classList.contains("hide")) return;
+  if (typeof Terminal === "undefined") {
+    shNote("xterm.js 没加载成功（assets/vendor 缺文件），请用协议台。");
+    return;
+  }
+  term = new Terminal({
+    fontFamily: 'ui-monospace, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace',
+    fontSize: 12.5, lineHeight: 1.15, cursorBlink: true, scrollback: 3000,
+    theme: {
+      background: "#070a10", foreground: "#c9d5e5", cursor: "#3b82f6",
+      selectionBackground: "#26456e",
+      black: "#0b0f16", red: "#ef4444", green: "#22c55e", yellow: "#f59e0b",
+      blue: "#3b82f6", magenta: "#a855f7", cyan: "#06b6d4", white: "#e6edf6"
+    }
+  });
+  fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open($("#termWrap"));
+  term.onData(onTermData);
+  term.onResize(({ cols, rows }) => { if (rawOn && isNative) native.sendResize(cols, rows); });
+  termInited = true;
+  buildKb();
+  fitTerm();
+  term.writeln("\x1b[2m板子遥控 · 蓝牙 Shell\x1b[0m");
+  term.writeln("\x1b[2m先在顶部连接并鉴权，再点「启动 Shell 会话」。\x1b[0m");
+}
+
+/* 键盘输入 -> PTY。粘滞 CTRL/ALT 在这里生效（软键盘发不出这些组合键） */
+function onTermData(d) {
+  let out = d;
+  if (sticky) {
+    out = "";
+    for (const ch of d) {
+      let c = ch.codePointAt(0);
+      if (sticky === "ctrl") {
+        if (c >= 97 && c <= 122) c -= 96;        // a-z -> 0x01-0x1a
+        else if (c >= 65 && c <= 90) c -= 64;
+        else if (c === 32) c = 0;                // 空格
+        else if (c === 91) c = 27;               // [
+        else if (c === 92) c = 28;               // \
+        else if (c === 93) c = 29;               // ]
+        else if (c === 94) c = 30;               // ^
+        else if (c === 95) c = 31;               // _
+        else c = c & 0x1f;
+        out += String.fromCharCode(c);
+      } else {
+        out += "\x1b" + ch;                      // ALT = ESC 前缀
+      }
+    }
+    clearSticky();
+  }
+  shellSendText(out);
+}
+
+const KB_KEYS = [
+  { t: "ESC", s: "\x1b" }, { t: "^C", s: "\x03" }, { t: "^D", s: "\x04" },
+  { t: "TAB", s: "\t" }, { t: "^Z", s: "\x1a" },
+  { t: "CTRL", sticky: "ctrl" }, { t: "ALT", sticky: "alt" },
+  { t: "↑", s: "\x1b[A" }, { t: "↓", s: "\x1b[B" },
+  { t: "←", s: "\x1b[D" }, { t: "→", s: "\x1b[C" },
+  { t: "HOME", s: "\x1b[H" }, { t: "END", s: "\x1b[F" },
+  { t: "PGUP", s: "\x1b[5~" }, { t: "PGDN", s: "\x1b[6~" },
+  { t: "|", s: "|" }, { t: "/", s: "/" }, { t: "~", s: "~" }, { t: "-", s: "-" }
+];
+
+function buildKb() {
+  const box = $("#kbBar");
+  box.innerHTML = "";
+  KB_KEYS.forEach(k => {
+    const b = document.createElement("button");
+    b.className = "ghost";
+    b.dataset.k = k.t;
+    b.textContent = k.t;
+    b.onclick = () => {
+      if (k.sticky) {
+        sticky = (sticky === k.sticky) ? null : k.sticky;
+        paintSticky();
+        toast(sticky ? (k.t + " 已锁定：再按一个键生效，再点一次取消") : "已取消修饰键");
+        return;
+      }
+      if (!rawOn) { toast("先点「启动 Shell 会话」"); return; }
+      shellSendText(k.s);
+      try { term.focus(); } catch (e) { }
+    };
+    box.appendChild(b);
+  });
+}
+function paintSticky() {
+  $("#kbBar").querySelectorAll("button").forEach(b => {
+    const k = KB_KEYS.filter(x => x.t === b.dataset.k)[0];
+    b.classList.toggle("sticky", !!(k && k.sticky && sticky === k.sticky));
+  });
+}
+function clearSticky() { sticky = null; paintSticky(); }
+
+function fitTerm() {
+  if (!termInited || !fitAddon) return;
+  if ($("#tab-tty").classList.contains("hide")) return;
+  try { fitAddon.fit(); } catch (e) { }
+}
+/* 软键盘弹出会改变可视高度，防抖后再 fit，避免连发 resize */
+function fitSoon() { clearTimeout(fitT); fitT = setTimeout(fitTerm, 180); }
+window.addEventListener("resize", fitSoon);
+window.addEventListener("orientationchange", fitSoon);
+if (window.visualViewport) window.visualViewport.addEventListener("resize", fitSoon);
+
+/* ---- 会话控制 ---- */
+function shNote(text) {
+  const n = $("#shNote");
+  if (!text) { n.classList.add("hide"); n.textContent = ""; return; }
+  n.classList.remove("hide");
+  n.textContent = text;
+}
+function ttyState(text) { $("#ttyState").textContent = text; }
+
+function paintShellBtns() {
+  const b = $("#btnShStart");
+  b.disabled = rawOn || shellStarting;
+  b.textContent = rawOn ? "会话进行中" : "启动 Shell 会话";
+  $("#btnShClose").disabled = !rawOn;
+}
+
+async function openShell() {
+  if (rawOn || shellStarting) { toast("会话已在进行中或正在启动"); return; }
+  if (!isNative) { demoShellOpen(); return; }
+  if (!authed) { toast("请先连接并鉴权"); return; }
+  if (termProtocol !== "escaped-v1") { toast("请先更新板端网关，再使用终端"); return; }
+  if (pending.size) { toast("请等待当前管理请求完成后再启动终端"); return; }
+  stopStream();
+  fitTerm();
+  const cols = Math.max(20, (term && term.cols) || 80);
+  const rows = Math.max(5, (term && term.rows) || 24);
+  shNote("");
+  ttyState("建立中…");
+  try {
+    await send("term.shell", { cols: cols, rows: rows, term: "xterm-256color", shell: "/bin/bash", protocol: "escaped-v1" }, 20000);
+    if (!rawOn) ttyState("正在接管…");
+  } catch (e) {
+    shellStarting = false;
+    // A timeout leaves the peer's phase unknown; rebuild a clean connection.
+    if (String(e.message).includes("请求超时")) {
+      native.disconnect(); onState("disconnected", "");
+    } else if (connected && authed) startStream();
+    ttyState("未启动");
+    const m = String(e.message || "");
+    if (m.indexOf("E_NOCMD") >= 0) {
+      shNote("板端还没实现 term.shell（原始 PTY 通道），Shell 视图暂时用不了。"
+        + "把 bt-remote\\提示词-板端加raw-pty终端.md 交给板子 agent 补上，重连后即可用。"
+        + "（右上角「协议台」现在就能用。）");
+    } else if (m.indexOf("E_BUSY") >= 0) {
+      shNote("板端已经有一个终端会话在跑（E_BUSY），等它结束再试。");
+    } else {
+      shNote("启动失败：" + m);
+    }
+  }
+  paintShellBtns();
+}
+
+function closeShell() {
+  if (!rawOn) { toast("当前没有会话"); return; }
+  if (isNative) native.sendClose();
+  else shellSendText("exit\n");
+  toast("已请求结束会话");
+}
+
+$("#btnShStart").onclick = openShell;
+$("#btnShClose").onclick = closeShell;
+$("#btnShFit").onclick = () => {
+  fitTerm();
+  if (rawOn && isNative && term) native.sendResize(term.cols, term.rows);
+  toast("已适配到 " + (term ? term.cols + "×" + term.rows : "--"));
+};
+
+function switchTty(kind) {
+  ttyKind = kind;
+  $("#segShell").classList.toggle("active", kind === "shell");
+  $("#segProto").classList.toggle("active", kind === "proto");
+  $("#ttyShellWrap").classList.toggle("hide", kind !== "shell");
+  $("#ttyProtoWrap").classList.toggle("hide", kind !== "proto");
+  if (kind === "shell") {
+    initTerm(); fitSoon();
+    try { if (term) term.focus(); } catch (e) { }
+  } else {
+    renderTtyQuick();
+  }
+}
+$("#segShell").onclick = () => switchTty("shell");
+$("#segProto").onclick = () => switchTty("proto");
+
+/* ---- 协议台 ---- */
+function ttyWrite(s) {
+  const b = $("#ttyOut");
+  if (b.textContent === "就绪。") b.textContent = "";
+  b.textContent += (b.textContent ? "\n" : "") + s;
+  /* 太长就砍掉前半段，避免 DOM 越来越卡 */
+  if (b.textContent.length > 60000) b.textContent = b.textContent.slice(-40000);
+  b.scrollTop = b.scrollHeight;
+}
+
+/** 协议台下把板端回复原文回显；Shell 视图不打扰（那是 PTY 的活） */
+function ttyEcho(line) {
+  if (ttyKind !== "proto") return;
+  if ($("#tab-tty").classList.contains("hide")) return;
+  ttyWrite("< " + line);
+}
+
+function onTtyOpen() {
+  if (ttyKind === "shell") { initTerm(); fitSoon(); }
+  else renderTtyQuick();
+  paintShellBtns();
+  if (!authed) {
+    if (ttyKind === "proto") ttyWrite("（未连接：先回顶部连接并鉴权）");
+    else ttyState("未连接");
+  }
+}
+
+function renderTtyQuick() {
+  const box = $("#ttyQuick");
+  box.innerHTML = "";
+  TTY_QUICK_PROTO.forEach(c => {
+    const b = document.createElement("button");
+    b.className = "ghost";
+    b.style.cssText = "flex:0 0 auto;font-size:12px;padding:5px 9px";
+    b.textContent = c.length > 20 ? c.slice(0, 18) + "…" : c;
+    b.onclick = () => { $("#ttyIn").value = c; ttySend(); };
+    box.appendChild(b);
+  });
+}
+
+function ttyPushHist(s) {
+  if (ttyHist[ttyHist.length - 1] !== s) ttyHist.push(s);
+  if (ttyHist.length > 50) ttyHist.shift();
+  ttyHi = -1;
+}
+
+function ttySend() {
+  const inp = $("#ttyIn");
+  const v = inp.value.trim();
+  if (!v) return;
+  inp.value = "";
+  ttyPushHist(v);
+
+  if (!authed) { ttyWrite("✗ 未连接或未鉴权，请先回顶部连接。"); return; }
+
+  let frame;
+  if (v.charAt(0) === "{") {
+    frame = v;                                  // 整帧原样发
+  } else {
+    const sp = v.indexOf(" ");
+    const name = sp < 0 ? v : v.slice(0, sp);
+    const rest = sp < 0 ? "" : v.slice(sp + 1).trim();
+    let args = {};
+    if (rest) {
+      try { args = JSON.parse(rest); }
+      catch (e) { ttyWrite("✗ 参数不是合法 JSON：" + rest); return; }
+    }
+    frame = JSON.stringify({ t: "cmd", id: nextId++, name: name, args: args });
+  }
+  ttyWrite("> " + frame);
+  try { raw(frame); } catch (e) { ttyWrite("✗ " + e.message); }
+}
+
+$("#btnTtySend").onclick = ttySend;
+$("#btnTtyClear").onclick = () => { $("#ttyOut").textContent = "就绪。"; };
+$("#ttyIn").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); ttySend(); return; }
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (!ttyHist.length) return;
+    e.preventDefault();
+    if (e.key === "ArrowUp") ttyHi = (ttyHi < 0) ? ttyHist.length - 1 : Math.max(0, ttyHi - 1);
+    else ttyHi = (ttyHi < 0) ? -1 : Math.min(ttyHist.length - 1, ttyHi + 1);
+    $("#ttyIn").value = (ttyHi < 0) ? "" : ttyHist[ttyHi];
+  }
+});
+
+/* 原生 -> JS：终端字节流（base64） */
+window.onBtRaw = function (b64) {
+  if (!termInited || typeof Terminal === "undefined") return;
+  let u8;
+  try { u8 = b64ToU8(b64); } catch (e) { return; }
+  try { term.write(u8); } catch (e) { }
+
+};
+
+/* ============ 提示 ============ */
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  // 多行消息（连接诊断）留久一点，单行提示 2.6 秒够了
+  toastTimer = setTimeout(() => t.classList.remove("show"), msg.indexOf("\n") >= 0 ? 12000 : 2600);
+}
+
+/* 连接诊断浮层：把「每种连接方式的耗时 + 异常原文」完整显示出来，
+   点一下关闭。样式全部内联，不依赖页面 CSS，避免被改版影响。 */
+function showDiag(text) {
+  let d = document.getElementById("diagBox");
+  if (!d) {
+    d = document.createElement("div");
+    d.id = "diagBox";
+    d.style.cssText = "position:fixed;left:10px;right:10px;bottom:10px;z-index:9999;"
+      + "background:#141414;color:#e8e8e8;border:1px solid #3a3a3a;border-radius:10px;"
+      + "padding:12px;font:12px/1.6 ui-monospace,Consolas,monospace;"
+      + "white-space:pre-wrap;word-break:break-all;max-height:60%;overflow:auto;"
+      + "box-shadow:0 8px 28px rgba(0,0,0,.55)";
+    d.onclick = function () { d.remove(); };
+    document.body.appendChild(d);
+  }
+  d.textContent = text + "\n\n（点一下关闭）";
+}
+
+/* ============ 启动 ============ */
+loadDevices();
+paintAuto();
+if (!isNative) {
+  setConn("", "演示模式");
+  token = token || "demo-token";
+  $("#token").value = token;
+  startDemo();
+} else if (!native.supported()) {
+  setConn("err", "本机不支持蓝牙");
+} else {
+  bootAuto();                     // 打开 App 自动连上次的设备
+}
+
+/* ---------- 演示模式：没有蓝牙桥时用假数据让界面活起来 ---------- */
+function startDemo() {
+  const A = [
+    { ssid: "630", bssid: "f4:fc:49:45:c9:75", signal_dbm: -26, freq: 5220, security: "WPA2", in_use: true, known: true },
+    { ssid: "Xiaomi_5G", bssid: "aa:bb:cc:00:11:22", signal_dbm: -58, freq: 5180, security: "WPA2", in_use: false, known: false },
+    { ssid: "TP-LINK_2.4G", bssid: "aa:bb:cc:00:33:44", signal_dbm: -71, freq: 2437, security: "WPA2", in_use: false, known: true },
+    { ssid: "Guest", bssid: "aa:bb:cc:00:55:66", signal_dbm: -83, freq: 2412, security: "开放", in_use: false, known: false }
+  ];
+  let tick = 0;
+
+  native.send = function (line) {
+    let m; try { m = JSON.parse(line); } catch (e) { return; }
+
+    if (m.t === "auth") {
+      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log"] }));
+      return;
+    }
+    const id = m.id;
+    const ok = (data) => setTimeout(() => feed(JSON.stringify({ t: "res", id: id, ok: true, data: data })), 120);
+
+    if (m.name === "sys.subscribe") {
+      ok({ ok: true, what: m.args.what, interval_s: m.args.interval_s });
+      setInterval(() => feed(JSON.stringify({ t: "ev", name: "metrics", data: fakeMetrics() })), 2000);
+      return;
+    }
+    if (m.name === "sys.info") return ok({ hostname: "orangepi3-lts", model: "Orange Pi 3 LTS", os: "Parrot 7.3", kernel: "6.18.44-sunxi64", uptime_s: 96780, boot_ts: 1759115565 });
+    if (m.name === "sys.metrics") return ok(fakeMetrics());
+    if (m.name === "svc.list") return ok([
+      { unit: "bt-gateway.service", desc: "蓝牙管控网关", active: "active", enabled: "enabled", rss_kb: 14800 },
+      { unit: "bluetooth.service", desc: "蓝牙服务", active: "active", enabled: "enabled", rss_kb: 5200 },
+      { unit: "ssh.service", desc: "SSH 远程登录", active: "active", enabled: "enabled", rss_kb: 4100 },
+      { unit: "cb-mcp-reap.timer", desc: "MCP 孤儿回收", active: "active", enabled: "enabled", rss_kb: null },
+      { unit: "ModemManager.service", desc: "4G 模块管理", active: "inactive", enabled: "masked", rss_kb: null }
+    ]);
+    if (m.name === "svc.act") {
+      const a = m.args.action, u = m.args.unit;
+      if ((u === "ssh.service") && (a === "stop" || a === "disable") && m.args.confirm !== a.toUpperCase()) {
+        setTimeout(() => feed(JSON.stringify({ t: "res", id: id, ok: false, err: "E_CONFIRM", msg: "dangerous action on ssh.service requires confirm=" + a.toUpperCase() })), 120);
+        return;
+      }
+      toast("演示：不下发真实动作");
+      return ok({ unit: u, active: "active", enabled: "enabled" });
+    }
+    if (m.name === "net.wifi.status") return ok({ ssid: "630", bssid: "f4:fc:49:45:c9:75", signal_dbm: -26, freq: 5220, ip: "192.168.2.20/16", gw: "192.168.2.1", dns: "192.168.2.1", backend: "netplan" });
+    if (m.name === "net.wifi.scan") return ok(A);
+    if (m.name === "net.wifi.saved") return ok([{ ssid: "630", has_psk: true }, { ssid: "TP-LINK_2.4G", has_psk: true }]);
+    if (m.name === "net.wifi.forget") return ok({ ok: true });
+    if (m.name === "net.wifi.connect") {
+      setTimeout(() => ok({ ok: true, tried: m.args.ssid, rolled_back: false, ip: "192.168.2.31/24" }), 1400);
+      return;
+    }
+    if (m.name === "pwr.rtc.get") return ok({ enabled: false, at: null, repeat: "none" });
+    if (m.name === "pwr.rtc.set") return ok({ ok: true });
+    if (m.name === "log.tail") return ok({ unit: m.args.unit, lines: ["[demo] bt-gateway 启动", "[demo] SPP 服务已注册 (Channel 1)", "[demo] 等待配对设备连接"] });
+    if (m.name === "log.follow") {
+      setTimeout(() => feed(JSON.stringify({ t: "ev", name: "log", data: { unit: m.args.unit, line: "[demo] 实时跟随已开启" } })), 400);
+      return ok({ ok: true });
+    }
+    if (m.name === "pwr.reboot" || m.name === "pwr.poweroff") return ok({ ok: true });
+    if (m.name === "term.caps") return ok({ allow: ["uname -a", "uptime", "id", "free -m"], max_out_kb: 32 });
+    if (m.name === "term.shell") {
+      ok({ pid: 4242, user: "root", shell: "/bin/bash", cols: m.args.cols, rows: m.args.rows });
+      setTimeout(() => {
+        feed(JSON.stringify({ t: "ev", name: "term.ready", data: { cols: m.args.cols, rows: m.args.rows } }));
+        demoStartPty();
+      }, 90);
+      return;
+    }
+return ok({});
+  };
+
+  function fakeMetrics() {
+    tick++;
+    const base = 30 + Math.sin(tick / 4) * 12 + Math.random() * 6;
+    const memUsed = 512000 + Math.sin(tick / 6) * 24000;
+    return {
+      ts: Math.floor(Date.now() / 1000),
+      cpu: { pct: Math.max(2, Math.round(base)), load1: 0.42, load5: 0.31, load15: 0.28, mhz: 1488, mhz_max: 1800, temp_c: 47 + Math.sin(tick / 9) * 3 },
+      mem: { total_kb: 2018400, used_kb: Math.round(memUsed), avail_kb: 1077000, cached_kb: 446000, zram_used_kb: 21000 },
+      disk: { root_total_kb: 31000000, root_used_kb: 9000000, root_free_kb: 22000000 },
+      net: {
+        wlan0: { rx_bps: 12000, tx_bps: 3400, ssid: "630", signal_dbm: -26, state: "up" },
+        end0: { state: "no-carrier", rx_bps: 0, tx_bps: 0 }
+      },
+      top: [
+        { pid: 1234, name: "codebuddy", cpu_pct: 12.4, mem_pct: 13.1 },
+        { pid: 908, name: "node", cpu_pct: 4.2, mem_pct: 6.8 },
+        { pid: 421, name: "bluetoothd", cpu_pct: 0.7, mem_pct: 1.2 },
+        { pid: 77, name: "systemd-networkd", cpu_pct: 0.3, mem_pct: 0.9 }
+      ]
+    };
+  }
+
+  native.devices = () => ([
+    { name: "OrangePi-3LTS", mac: "09:1E:79:E3:64:02" },
+    { name: "HC-05", mac: "98:D3:31:FD:12:A4" }
+  ]);
+  native.enabled = () => true;
+  loadDevices();
+
+  feed(JSON.stringify({ t: "hello", ver: 1, dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required" }));
+}
+
+/* ---------- 演示模式的假 PTY：让浏览器里也能看到真终端长什么样 ---------- */
+const DEMO_OS_RELEASE = [
+  "PRETTY_NAME=\"Parrot Security 7.3 (echo)\"",
+  "NAME=\"Parrot Security\"",
+  "VERSION_ID=\"7.3\"",
+  "ID=parrot",
+  "HOME_URL=\"https://www.parrotsec.org/\""
+].join("\r\n");
+
+const DEMO_FREE = "               total        used        free      buff/cache   available\r\n"
+  + "Mem:            1971         515        1077           378        1300\r\n"
+  + "Swap:            986          21         965";
+const DEMO_DF = "Filesystem      Size  Used Avail Use% Mounted on\r\n"
+  + "/dev/mmcblk0p2   29G  8.6G   19G  32% /";
+const DEMO_TOP = "top - 22:41:03 up 1 day,  4:12,  1 user,  load average: 0.28, 0.25, 0.22\r\n"
+  + "Tasks: 132 total,   1 running, 131 sleeping,   0 stopped\r\n"
+  + "%Cpu(s):  3.1 us,  1.2 sy,  0.0 ni, 95.4 id\r\n"
+  + "MiB Mem :   1971.2 total,   1077.6 free,    513.8 used\r\n\r\n"
+  + "  PID USER      PR  NI    VIRT    RES  %CPU  %MEM     TIME+ COMMAND\r\n"
+  + " 1142 root      20   0  284316  28812   1.3   1.4   0:42.11 bt-gateway\r\n"
+  + " 1908 root      20   0  612044 268412   0.7  13.3   3:21.08 codebuddy\r\n"
+  + "  421 root      20   0   98412  24212   0.3   1.2   0:11.07 bluetoothd";
+
+const DEMO_CMDS = {
+  help: "内置演示命令：help ls pwd whoami id uname hostname free df cat top clear exit",
+  ls: "\x1b[34mbt-remote\x1b[0m  \x1b[34mcodebuddy-static-backup\x1b[0m  btcap.sh  bt_connectable.sh  rfcomm_map2.py",
+  "ls -l": "total 24\r\n-rwxr-xr-x 1 root root 4211 Sep 30 21:10 btcap.sh\r\n-rwxr-xr-x 1 root root 1502 Sep 30 22:02 bt_connectable.sh",
+  pwd: "/root",
+  whoami: "root",
+  id: "uid=0(root) gid=0(root) groups=0(root)",
+  uname: "Linux",
+  "uname -a": "Linux orangepi3-lts 6.18.44-current-sunxi64 #1 SMP PREEMPT aarch64 GNU/Linux",
+  hostname: "orangepi3-lts",
+  free: DEMO_FREE,
+  "free -m": DEMO_FREE,
+  df: DEMO_DF,
+  "df -h": DEMO_DF,
+  "cat /etc/os-release": DEMO_OS_RELEASE,
+  top: DEMO_TOP,
+  htop: DEMO_TOP
+};
+
+function demoWrite(s) { try { term.write(new TextEncoder().encode(s)); } catch (e) { } }
+function demoPrompt() { demoWrite("\x1b[32mroot@orangepi3-lts\x1b[0m:\x1b[34m/root\x1b[0m# "); }
+
+let demoLine = "";
+
+function demoStartPty() {
+  initTerm();
+  ttyState("已就绪（演示）");
+  shNote("");
+  paintShellBtns();
+  if (!termInited) return;
+  demoWrite("\x1b[2m[演示模式] 没有真蓝牙链路，下面是本地假 PTY，只用来预览界面。\x1b[0m\r\n");
+  demoWrite("Welcome to Parrot Security 7.3 (GNU/Linux 6.18.44 aarch64)\r\n\r\n");
+  demoPrompt();
+}
+
+function demoShellOpen() { demoStartPty(); }
+
+/** 演示模式下的假 PTY：把按键当真 bash 处理（回显、退格、Ctrl-C、内建命令） */
+function demoSend(u8) {
+  const s = new TextDecoder().decode(u8);
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if (c === 13 || c === 10) {
+      demoWrite("\r\n");
+      const cmd = demoLine.trim();
+      demoLine = "";
+      if (cmd === "clear") { demoWrite("\x1b[2J\x1b[H"); demoPrompt(); continue; }
+      if (cmd === "exit") {
+        demoWrite("\x1b[33m[演示] 会话结束\x1b[0m\r\n");
+        rawOn = false; paintShellBtns(); ttyState("会话已结束");
+        continue;
+      }
+      if (cmd) {
+        const body = DEMO_CMDS[cmd];
+        demoWrite((body == null ? ("bash: " + cmd.split(" ")[0] + ": command not found") : body) + "\r\n");
+      }
+      demoPrompt();
+    } else if (c === 127 || c === 8) {
+      if (demoLine.length) { demoLine = demoLine.slice(0, -1); demoWrite("\b \b"); }
+    } else if (c === 3) {
+      demoWrite("^C\r\n"); demoLine = ""; demoPrompt();
+    } else if (c === 12) {
+      demoWrite("\x1b[2J\x1b[H"); demoPrompt();
+    } else if (c >= 32) {
+      demoLine += ch; demoWrite(ch);
+    }
+  }
+}
+</script>
+</body>
+</html>

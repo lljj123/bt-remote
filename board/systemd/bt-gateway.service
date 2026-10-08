@@ -1,0 +1,27 @@
+[Unit]
+Description=Bluetooth remote management gateway
+After=bluetooth.service
+Wants=bluetooth.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+EnvironmentFile=-/etc/bt-gateway/gateway.env
+ExecStart=/usr/bin/python3 /usr/local/bin/bt-gateway
+Restart=always
+RestartSec=5
+WatchdogSec=45
+TimeoutStartSec=60
+TimeoutStopSec=10
+KillMode=control-group
+RuntimeDirectory=bt-gateway
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+# This budget includes interactive shell children; override via systemctl edit.
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
