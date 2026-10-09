@@ -15,6 +15,8 @@ bt-gateway — 香橙派 3 LTS「蓝牙管控网关」
 两者共用 NDJSON 帧 + 鉴权 + 命令分发。
 """
 import dbus
+import base64
+import binascii
 import dbus.service
 import fcntl
 import glob
@@ -50,6 +52,9 @@ GUARD_FLAG = "/run/bt-gateway/wifi-switch-flag"
 GUARD_UNIT = "btg-wifi-guard"
 NETWORK_LOCK = threading.Lock()
 TERM_PROTOCOL = "escaped-v1"
+TERM_MUX_PROTOCOL = "json-mux-v1"
+TERM_CHUNK = 2048
+TERM_INPUT_LIMIT = 65536
 SOCK_PATH = "/run/bt-gateway.sock"
 NETPLAN_WIFI = os.environ.get("BTG_NETPLAN_WIFI", "/etc/netplan/30-wifis-dhcp.yaml")
 NETPLAN_GLOB = "/etc/netplan/*.yaml"
@@ -1160,8 +1165,10 @@ def _set_winsize(fd, cols, rows):
 
 def cmd_term_shell(sess, a):
     a = a or {}
-    if a.get("protocol") != TERM_PROTOCOL:
-        raise CmdError("E_ARGS", "terminal requires protocol=" + TERM_PROTOCOL)
+    if a.get("protocol") not in (TERM_PROTOCOL, TERM_MUX_PROTOCOL):
+        raise CmdError("E_ARGS", "unsupported terminal protocol")
+    if sess.mux_mode and a.get("protocol") != TERM_MUX_PROTOCOL:
+        raise CmdError("E_ARGS", "reconnect to use legacy terminal protocol")
     shell = a.get("shell", "/bin/bash")
     if shell not in SHELL_WHITELIST:
         raise CmdError("E_ARGS", "shell must be one of %s"
@@ -1255,6 +1262,14 @@ class Session(threading.Thread):
         self.shell_fd = None
         self.shell_cols = 80
         self.shell_rows = 24
+        self.mux_mode = False
+        self.term_id = None
+        self.term_thread = None
+        self.term_stop = threading.Event()
+        self.term_lock = threading.Lock()
+        self.term_input = bytearray()
+        self.term_size = None
+        self.job_lock = threading.Lock()
 
     # ---------------- 发送
     def send(self, obj):
@@ -1438,7 +1453,8 @@ class Session(threading.Thread):
         threading.Thread(target=self.pusher, daemon=True).start()
         try:
             self.send({"t": "hello", "ver": VER, "dev": DEV_ID,
-                       "name": DEV_NAME, "auth": "required", "term_protocol": TERM_PROTOCOL})
+                       "name": DEV_NAME, "auth": "required", "term_protocol": TERM_PROTOCOL,
+                       "term_protocols": [TERM_PROTOCOL, TERM_MUX_PROTOCOL]})
             if not self.authenticate():
                 self.close()
                 return
@@ -1473,14 +1489,43 @@ class Session(threading.Thread):
                 if not isinstance(name, str) or not isinstance(args, dict):
                     self.res_err(rid, "E_ARGS", "name must be string and args must be object")
                     continue
+                self.last_beat = time.time()
+                if name in ("term.input", "term.resize", "term.close"):
+                    try:
+                        self.res_ok(rid, self._term_control(name, args))
+                    except CmdError as e:
+                        self.res_err(rid, e.code, e.msg)
+                    continue
                 fn = COMMANDS.get(name)
                 if not fn:
                     self.res_err(rid, "E_NOCMD", "unknown command: %s" % name)
+                    continue
+                if self.mux_mode and name not in ("term.shell", "dev.ping"):
+                    if not self.job_lock.acquire(blocking=False):
+                        self.res_err(rid, "E_BUSY", "another command is running; retry after its response")
+                    else:
+                        threading.Thread(target=self._command_job,
+                                         args=(rid, name, fn, args), daemon=True).start()
                     continue
                 t0 = time.time()
                 try:
                     data = fn(self, args)
                     if name == "term.shell":
+                        if args.get("protocol") == TERM_MUX_PROTOCOL:
+                            self.mux_mode = True
+                            self.term_id = uuid.uuid4().hex
+                            self.term_stop.clear()
+                            with self.term_lock:
+                                self.term_input.clear()
+                                self.term_size = None
+                            data.update({"sid": self.term_id, "protocol": TERM_MUX_PROTOCOL})
+                            self.res_ok(rid, data)
+                            self.send_ev("term.ready", {"sid": self.term_id,
+                                         "protocol": TERM_MUX_PROTOCOL,
+                                         "cols": self.shell_cols, "rows": self.shell_rows})
+                            self.term_thread = threading.Thread(target=self._term_mux, daemon=True)
+                            self.term_thread.start()
+                            continue
                         with self.wlock:
                             self.raw_mode = True
                             self.res_ok(rid, data)
@@ -1503,7 +1548,107 @@ class Session(threading.Thread):
                 log("cmd %s -> %.2fs" % (name, time.time() - t0))
         finally:
             self.close()
-            self._shell_cleanup()
+            if self.term_thread is not None:
+                self.term_thread.join(timeout=5)
+            else:
+                self._shell_cleanup()
+
+    def _command_job(self, rid, name, fn, args):
+        # One ordinary command at a time; controls and heartbeat stay responsive.
+        # Already-started system mutations must finish their own rollback logic.
+        try:
+            if not self.closed:
+                self.res_ok(rid, fn(self, args))
+        except CmdError as e:
+            self.res_err(rid, e.code, e.msg)
+        except Exception as e:
+            log("cmd %s error: %r" % (name, e), logging.ERROR)
+            self.res_err(rid, "E_INTERNAL", str(e)[:200])
+        finally:
+            if self.closed:
+                self.log_follow_stop()
+            self.job_lock.release()
+
+    def _term_control(self, name, args):
+        with self.term_lock:
+            if (not self.mux_mode or self.term_id is None or
+                    args.get("sid") != self.term_id or self.term_stop.is_set()):
+                raise CmdError("E_STATE", "terminal session is not active")
+            if name == "term.input":
+                encoded = args.get("b64")
+                if not isinstance(encoded, str) or len(encoded) > 4 * ((TERM_CHUNK + 2) // 3):
+                    raise CmdError("E_ARGS", "invalid terminal input size")
+                try:
+                    data = base64.b64decode(encoded, validate=True)
+                except (ValueError, binascii.Error):
+                    raise CmdError("E_ARGS", "invalid base64")
+                if len(data) > TERM_CHUNK:
+                    raise CmdError("E_ARGS", "terminal input exceeds chunk limit")
+                if len(self.term_input) + len(data) > TERM_INPUT_LIMIT:
+                    raise CmdError("E_BUSY", "terminal input buffer full")
+                self.term_input.extend(data)
+                return {"accepted": len(data)}
+            if name == "term.resize":
+                cols, rows = args.get("cols"), args.get("rows")
+                if type(cols) is not int or type(rows) is not int:
+                    raise CmdError("E_ARGS", "cols/rows must be integers")
+                self.term_size = (cols, rows)
+            else:
+                self.term_stop.set()
+            return {"accepted": True}
+
+    def _term_mux(self):
+        fd, pid, sid = self.shell_fd, self.shell_pid, self.term_id
+        reason = "exit"
+        try:
+            while not self.closed and not self.term_stop.is_set():
+                with self.term_lock:
+                    size, self.term_size = self.term_size, None
+                    pending = bool(self.term_input)
+                if size is not None:
+                    self.shell_cols, self.shell_rows = _set_winsize(fd, *size)
+                readable, writable, _ = select.select([fd], [fd] if pending else [], [], 0.05)
+                if writable:
+                    with self.term_lock:
+                        try:
+                            n = os.write(fd, self.term_input[:TERM_CHUNK])
+                            del self.term_input[:n]
+                        except BlockingIOError:
+                            pass
+                if readable:
+                    try:
+                        data = os.read(fd, TERM_CHUNK)
+                    except BlockingIOError:
+                        continue
+                    if not data:
+                        break
+                    self.send_ev("term.output", {"sid": sid,
+                                 "b64": base64.b64encode(data).decode("ascii")})
+                    # Yield between bounded frames so command responses can interleave.
+                    time.sleep(0.001)
+            if self.closed or self.term_stop.is_set():
+                reason = "close"
+        except (OSError, ValueError):
+            reason = "pty_closed"
+        finally:
+            with self.term_lock:
+                self.term_stop.set()
+                self.term_input.clear()
+            try:
+                os.killpg(os.tcgetpgrp(fd), signal.SIGHUP)
+            except OSError:
+                pass
+            code = self._reap_shell(pid)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            # Keep the shell busy until its final event is on the wire.
+            self.send_ev("term.exit", {"sid": sid, "code": code, "reason": reason})
+            with self.term_lock:
+                self.shell_fd = None
+                self.term_id = None
+                self.shell_pid = None
 
     def _reap_shell(self, pid):
         for _ in range(10):
@@ -1641,6 +1786,7 @@ class Session(threading.Thread):
         if self.closed:
             return
         self.closed = True
+        self.term_stop.set()
         self.log_follow_stop()
         try:
             self.sock.shutdown(socket.SHUT_RDWR)

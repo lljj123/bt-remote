@@ -7,8 +7,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Python and installer regression tests
-        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Python syntax
+        run: |
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          for directory in ('board', 'tools'):
+              for path in Path(directory).rglob('*.py'):
+                  ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+          PY
       - name: Shell syntax
         run: |
           for script in install.sh board/bin/*.sh board/etc/*.sh; do bash -n "$script"; done

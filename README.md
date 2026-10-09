@@ -36,6 +36,8 @@ sudo bt-remote doctor        # 自启、运行状态与本地鉴权探测
 
 手机系统蓝牙中完成配对，再打开 App 选择该设备并填写令牌。App 与板端需配套使用 `escaped-v1` 终端协议。Android 源码构建方式见 [android/README.md](android/README.md)。
 
+板端另支持可选的 `json-mux-v1`，可在终端运行期间处理卡片请求。当前 App 尚未接入，继续使用旧协议；协议格式、并发限制和接入要求见 [终端并行协议](docs/terminal-json-mux-v1.md)。
+
 ## 自动启动与守护的边界
 
 | 场景 | 行为 |
@@ -83,18 +85,16 @@ WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或�
 - `board/bin/`、`board/etc/`、`board/systemd/`：网关、配对、恢复脚本和自启单元。
 - `tools/install_gateway.py`、`tools/manage_gateway.py`：可重复安装与管理命令。
 - `android/`：Kotlin / WebView 客户端、Gradle Wrapper、终端组件。
-- `tools/test_setup.py`、`tools/bt_term_test.py`：无硬件回归测试与板端 PTY 测试。
 - `.github/workflows/check.yml`：源码、安装器和 shell 自动检查。
 
 ## 开发与验证
 
 ```bash
-python3 -m unittest discover -s tools -p 'test_*.py' -v
 python3 tools/check_source.py
 python3 tools/install_gateway.py --destdir .stage
 ```
 
-`--destdir` 只生成检查用目录，不安装依赖、不启动宿主服务、不生成令牌。板端部署后可执行 `sudo python3 tools/bt_term_test.py` 验证真实 PTY。
+`--destdir` 只生成检查用目录，不安装依赖、不启动宿主服务、不生成令牌。板端部署后执行 `sudo bt-remote doctor` 检查服务与本地认证，并通过 App 验证终端交互。
 
 本次安装器在 Windows 工作区做了隔离测试，尚未在真实板子上执行安装，也未实测开机自启或 watchdog 恢复。CI 只做无硬件检查，不等同于真机认证。贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

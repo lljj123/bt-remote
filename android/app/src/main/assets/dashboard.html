@@ -10,19 +10,22 @@
 <script src="vendor/addon-fit.js"></script>
 <style>
   :root{
-    --bg:#0b0f16; --panel:#141a24; --panel2:#1a2230; --line:#263041;
-    --text:#e6edf6; --muted:#8b9ab1; --dim:#5d6b80;
-    --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
-    --r:12px;
+    --bg:#0a0e15; --panel:#121826; --panel2:#1b2432; --line:#233044;
+    --text:#eaf0f8; --muted:#8e9cb1; --dim:#5c6a80;
+    --accent:#3b82f6; --accent2:#7fb0ff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --r:14px;
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;background:var(--bg);color:var(--text);
-    font:14px/1.5 -apple-system,"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
-    padding:0 0 24px}
+    font:14px/1.55 var(--font);padding:0 0 28px;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
   #app{max-width:560px;margin:0 auto;padding:0 12px}
-  h1{font-size:16px;font-weight:500;margin:0}
+  h1{font-size:16px;font-weight:500;margin:0;letter-spacing:.2px}
   .muted{color:var(--muted)}
   .dim{color:var(--dim)}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
   /* 顶栏 */
   header{position:sticky;top:0;z-index:10;background:var(--bg);
@@ -46,19 +49,42 @@
   input{width:100%}
 
   /* 标签页 */
-  nav{display:flex;gap:4px;margin:0 -12px 12px;padding:0 12px;overflow-x:auto}
-  nav button{flex:0 0 auto;background:transparent;border:none;color:var(--muted);
-    padding:8px 10px;border-radius:9px;font-size:13px}
-  nav button.active{background:var(--panel);color:var(--text);font-weight:500}
+  nav{display:flex;margin:0 -12px 14px;padding:0 4px;overflow-x:auto;
+    border-bottom:1px solid var(--line)}
+  nav button{flex:1 1 0;min-width:0;background:transparent;border:none;color:var(--muted);
+    padding:9px 2px 11px;border-radius:0;font-size:13px;position:relative;
+    display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap}
+  nav button svg{width:15px;height:15px;display:block;flex:0 0 auto}
+  nav button.active{color:var(--text);font-weight:500}
+  nav button.active::after{content:"";position:absolute;left:14%;right:14%;bottom:-1px;
+    height:2px;border-radius:2px;background:var(--accent)}
 
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
-    padding:12px;margin-bottom:10px}
-  .card h2{font-size:13px;font-weight:500;margin:0 0 10px;color:var(--muted)}
+    padding:14px;margin-bottom:12px}
+  .card h2{font-size:13px;font-weight:500;margin:0 0 12px;color:var(--muted);
+    display:flex;align-items:center;gap:6px;letter-spacing:.2px}
+  .card h2 svg{width:14px;height:14px;flex:0 0 auto}
 
-  .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
-  .tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px}
-  .tile .k{font-size:11px;color:var(--muted)}
-  .tile .v{font-size:19px;font-weight:500;margin-top:2px;white-space:nowrap}
+  /* 网卡卡片 */
+  .iface{display:flex;align-items:center;gap:11px;padding:11px 0}
+  .iface+.iface{border-top:1px solid var(--line)}
+  .iface .ic{width:36px;height:36px;border-radius:10px;background:var(--panel2);
+    display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .iface .ic svg{width:17px;height:17px}
+  .iface .bd{flex:1;min-width:0}
+  .iface .nm{font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px}
+  .iface .nm .dot{width:6px;height:6px;flex:0 0 auto}
+  .iface .sub{font-size:11px;color:var(--muted);margin-top:1px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .iface .tag{font-size:10px;padding:2px 7px;border-radius:999px;background:var(--panel2);
+    color:var(--muted);flex:0 0 auto;white-space:nowrap}
+
+  .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:11px 10px 10px}
+  .tile .k{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px}
+  .tile .k svg{width:12px;height:12px;flex:0 0 auto}
+  .tile .v{font-size:20px;font-weight:500;margin-top:3px;white-space:nowrap;
+    font-variant-numeric:tabular-nums;line-height:1.2}
   .tile .v small{font-size:11px;font-weight:400;color:var(--muted)}
 
   /* 进度条 */
@@ -114,6 +140,12 @@
     opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw}
   .toast.show{opacity:1}
   .hide{display:none}
+
+  /* 终端全屏 */
+  #tab-tty.fs{position:fixed;inset:0;z-index:80;background:var(--bg);overflow:hidden;padding:10px 12px}
+  #tab-tty.fs .card{max-width:none;height:100%;display:flex;flex-direction:column;margin-bottom:0}
+  #tab-tty.fs #termWrap{flex:1;min-height:0}
+  #tab-tty.fs #ttyShellWrap{flex:1;min-height:0;display:flex;flex-direction:column}
 </style>
 </head>
 <body>
@@ -124,38 +156,43 @@
       <span class="dot" id="dot"></span>
       <h1 id="devName">板子遥控</h1>
       <span class="stat" id="stat">未连接</span>
+      <button id="btnConn" class="pri" style="flex:0 0 auto;padding:6px 14px;margin-left:8px">连接</button>
+      <button id="btnFold" class="ghost" style="flex:0 0 auto;padding:6px 8px" aria-label="展开或收起连接配置">
+        <svg id="foldIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;display:block;transition:transform .25s"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
     </div>
-    <div class="row2">
-      <select id="devSel"></select>
-      <button id="btnReload" class="ghost">刷新</button>
-      <button id="btnConn" class="pri">连接</button>
+    <div id="connMore" class="hide">
+      <div class="row2">
+        <select id="devSel"></select>
+        <button id="btnReload" class="ghost">刷新</button>
+      </div>
+      <div class="row2">
+        <input id="token" type="password" placeholder="预共享令牌（首次填写后记住）" autocomplete="off" style="flex:1;min-width:0">
+        <button id="btnAuto" class="ghost" style="flex:0 0 auto">自动连接</button>
+      </div>
+      <div class="dim" id="autoHint" style="font-size:11px;margin-top:6px"></div>
     </div>
-    <div class="row2">
-      <input id="token" type="password" placeholder="预共享令牌（首次填写后记住）" autocomplete="off" style="flex:1;min-width:0">
-      <button id="btnAuto" class="ghost" style="flex:0 0 auto">自动连接</button>
-    </div>
-    <div class="dim" id="autoHint" style="font-size:11px;margin-top:6px"></div>
   </header>
 
   <nav>
-    <button data-tab="ov" class="active">概览</button>
-    <button data-tab="svc">服务</button>
-    <button data-tab="net">网络</button>
-    <button data-tab="pwr">电源</button>
-    <button data-tab="log">日志</button>
-    <button data-tab="tty">终端</button>
+    <button data-tab="ov" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</button>
+    <button data-tab="svc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>服务</button>
+    <button data-tab="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络</button>
+    <button data-tab="pwr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>电源</button>
+    <button data-tab="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>日志</button>
+    <button data-tab="tty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>终端</button>
   </nav>
 
   <!-- 概览 -->
   <section id="tab-ov">
     <div class="tiles">
-      <div class="tile"><div class="k">CPU</div><div class="v" id="mCpu">--</div>
+      <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="10" y="10" width="4" height="4"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>CPU</div><div class="v" id="mCpu">--</div>
         <div class="pb"><i id="bCpu"></i></div></div>
-      <div class="tile"><div class="k">内存</div><div class="v" id="mMem">--</div>
+      <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11v2M10 11v2M14 11v2M18 11v2"/></svg>内存</div><div class="v" id="mMem">--</div>
         <div class="pb"><i id="bMem"></i></div></div>
-      <div class="tile"><div class="k">温度</div><div class="v" id="mTmp">--</div>
+      <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13.5V5a2 2 0 0 1 4 0v8.5"/><path d="M14 17a4 4 0 1 1-4 0"/></svg>温度</div><div class="v" id="mTmp">--</div>
         <div class="pb"><i id="bTmp"></i></div></div>
-      <div class="tile"><div class="k">磁盘</div><div class="v" id="mDsk">--</div>
+      <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg>磁盘</div><div class="v" id="mDsk">--</div>
         <div class="pb"><i id="bDsk"></i></div></div>
     </div>
 
@@ -167,14 +204,30 @@
     </div>
 
     <div class="card">
-      <h2>设备与运行</h2>
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>设备与运行</h2>
       <div class="kv"><b>主机名</b><span id="iHost">--</span></div>
       <div class="kv"><b>系统</b><span id="iOs">--</span></div>
       <div class="kv"><b>型号</b><span id="iModel">--</span></div>
       <div class="kv"><b>运行时长</b><span id="iUp">--</span></div>
-      <div class="kv"><b>无线</b><span id="iWlan">--</span></div>
-      <div class="kv"><b>有线</b><span id="iEth">--</span></div>
       <div class="kv"><b>负载</b><span id="iLoad">--</span></div>
+    </div>
+
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络接口</h2>
+      <div id="ifaceList"></div>
+    </div>
+
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg>磁盘挂载</h2>
+      <div class="iface" style="padding-top:0">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg></div>
+        <div class="bd">
+          <div class="nm">根分区 <span class="dim" style="font-weight:400">/</span></div>
+          <div class="sub" id="dskSub">--</div>
+        </div>
+        <span class="tag" id="dskTag">--</span>
+      </div>
+      <div class="pb" style="margin-top:10px"><i id="bDskFull"></i></div>
     </div>
 
     <div class="card">
@@ -273,6 +326,7 @@
           <button class="pri" id="btnShStart" style="flex:1">启动 Shell 会话</button>
           <button class="ghost" id="btnShClose" style="flex:1">结束会话</button>
           <button class="ghost" id="btnShFit" style="flex:0 0 auto">适配</button>
+          <button class="ghost" id="btnShFull" style="flex:0 0 auto">全屏</button>
         </div>
         <div class="dim" style="font-size:11px;margin-top:8px">
           root 权限的交互式 bash，和 SSH 上去一样。点终端区域唤起键盘；
@@ -414,6 +468,16 @@ $("#token").addEventListener("change", e => {
     else toast("令牌保存失败，本次可用，重启后需重新填写");
   } else localStorage.setItem("btr.token", token);
 });
+
+/* ---- 连接信息折叠 ---- */
+let connFolded = !token;   // token 为空时默认展开，方便首次填写
+function setConnFold(folded) {
+  connFolded = folded;
+  $("#connMore").classList.toggle("hide", folded);
+  $("#foldIcon").style.transform = folded ? "" : "rotate(180deg)";
+}
+$("#btnFold").onclick = () => setConnFold(!connFolded);
+setConnFold(connFolded);
 
 /* ============ 协议 ============ */
 let nextId = 1;
@@ -771,10 +835,37 @@ function renderMetrics(d) {
   $("#lgCpu").textContent = Math.round(cpu.pct || 0) + "% · " + (cpu.mhz || 0) + " MHz";
   $("#lgMem").textContent = fmtKB(mem.used_kb || 0) + " / " + fmtKB(mem.total_kb || 0);
 
-  const w = (d.net && d.net.wlan0) || {}, e0 = (d.net && d.net.end0) || {};
-  $("#iWlan").textContent = w.ssid
-    ? (w.ssid + " · " + w.signal_dbm + " dBm") : "--";
-  $("#iEth").textContent = e0.state || "--";
+  /* 网络接口：动态渲染 d.net 里所有接口（wlan0/end0/wlx... 有多少显示多少） */
+  const IC_WIFI = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>';
+  const IC_ETH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 15l4-4 3 3 5-6"/></svg>';
+  const nets = d.net || {};
+  const order = ["wlan0", "end0"].concat(Object.keys(nets).filter(k => k !== "wlan0" && k !== "end0"));
+  const ifaceBox = $("#ifaceList");
+  ifaceBox.innerHTML = "";
+  order.forEach(name => {
+    if (!(name in nets)) return;
+    const info = nets[name] || {};
+    const isWifi = /^wl/i.test(name);
+    const isUsb = /^wlx/i.test(name);
+    let on = false, sub = "未连接";
+    if (info.ssid) { on = true; sub = info.ssid + " · " + info.signal_dbm + " dBm"; }
+    else if (info.state) { on = !/down|no-carrier/i.test(String(info.state)); sub = on ? String(info.state) : "未连接"; }
+    else if (info.ip) { on = true; sub = String(info.ip); }
+    const type = isUsb ? "USB WiFi" : isWifi ? "WiFi" : "有线";
+    const div = document.createElement("div");
+    div.className = "iface";
+    div.innerHTML =
+      '<div class="ic">' + (isWifi ? IC_WIFI : IC_ETH) + '</div>' +
+      '<div class="bd"><div class="nm"><span class="dot' + (on ? " on" : "") + '"></span>' + esc(name) + '</div>' +
+      '<div class="sub">' + esc(sub) + '</div></div>' +
+      '<span class="tag">' + type + '</span>';
+    ifaceBox.appendChild(div);
+  });
+
+  $("#dskSub").textContent = fmtKB(disk.root_used_kb || 0) + " / " + fmtKB(disk.root_total_kb || 0);
+  $("#dskTag").textContent = dskPct + "%";
+  $("#bDskFull").style.width = dskPct + "%";
+  $("#bDskFull").style.background = dskPct > 85 ? "var(--bad)" : dskPct > 75 ? "var(--warn)" : "var(--accent)";
   $("#iLoad").textContent = [cpu.load1, cpu.load5, cpu.load15].map(x => (x || 0).toFixed(2)).join("  ");
   const upSec = uptimeSec();
   $("#iUp").textContent = upSec == null ? "--" : up(upSec);
@@ -1083,19 +1174,44 @@ window.onAndroidBack = function () {
 };
 
 /* ============ 标签页 ============ */
+const TAB_ORDER = ["ov", "svc", "net", "pwr", "log", "tty"];
+let curTab = "ov";
+
+function switchTab(name) {
+  if (!TAB_ORDER.includes(name)) return;
+  curTab = name;
+  document.querySelectorAll("nav button").forEach(x => {
+    x.classList.toggle("active", x.dataset.tab === name);
+  });
+  TAB_ORDER.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== name));
+  if (name !== "tty") setTtyFull(false);   // 切走终端页时退出全屏
+  if (name === "svc") refreshServices();
+  if (name === "net") { loadNetwork(); loadSaved(); }
+  if (name === "ov") loadOverview();
+  if (name === "tty") onTtyOpen();
+}
+
 document.querySelectorAll("nav button").forEach(b => {
-  b.onclick = () => {
-    document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
-    b.classList.add("active");
-    ["ov", "svc", "net", "pwr", "log", "tty"].forEach(t => {
-      $("#tab-" + t).classList.toggle("hide", t !== b.dataset.tab);
-    });
-    if (b.dataset.tab === "svc") refreshServices();
-    if (b.dataset.tab === "net") { loadNetwork(); loadSaved(); }
-    if (b.dataset.tab === "ov") loadOverview();
-    if (b.dataset.tab === "tty") onTtyOpen();
-  };
+  b.onclick = () => switchTab(b.dataset.tab);
 });
+
+/* 滑动换页：在空白内容区左右滑切换相邻标签页（交互元素、终端内不触发） */
+const NO_SWIPE = "#termWrap,input,select,textarea,.sheet,.kb,button,a";
+let swipeX = null, swipeY = null;
+document.addEventListener("touchstart", e => {
+  if (e.target.closest && e.target.closest(NO_SWIPE)) return;
+  swipeX = e.touches[0].clientX; swipeY = e.touches[0].clientY;
+}, { passive: true });
+document.addEventListener("touchend", e => {
+  if (swipeX === null) return;
+  const dx = e.changedTouches[0].clientX - swipeX;
+  const dy = e.changedTouches[0].clientY - swipeY;
+  swipeX = swipeY = null;
+  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy)) return;
+  const i = TAB_ORDER.indexOf(curTab);
+  const next = dx < 0 ? Math.min(i + 1, TAB_ORDER.length - 1) : Math.max(i - 1, 0);
+  if (next !== i) switchTab(TAB_ORDER[next]);
+}, { passive: true });
 
 async function loadOverview() {
   if (!authed) return;
@@ -1335,6 +1451,17 @@ $("#btnShFit").onclick = () => {
   toast("已适配到 " + (term ? term.cols + "×" + term.rows : "--"));
 };
 
+/* ---- 终端全屏 ---- */
+let ttyFull = false;
+function setTtyFull(full) {
+  ttyFull = full;
+  $("#tab-tty").classList.toggle("fs", full);
+  document.body.style.overflow = full ? "hidden" : "";
+  $("#btnShFull").textContent = full ? "退出全屏" : "全屏";
+  if (full) setTimeout(fitTerm, 80);
+}
+$("#btnShFull").onclick = () => setTtyFull(!ttyFull);
+
 function switchTty(kind) {
   ttyKind = kind;
   $("#segShell").classList.toggle("active", kind === "shell");
@@ -1568,10 +1695,11 @@ return ok({});
       ts: Math.floor(Date.now() / 1000),
       cpu: { pct: Math.max(2, Math.round(base)), load1: 0.42, load5: 0.31, load15: 0.28, mhz: 1488, mhz_max: 1800, temp_c: 47 + Math.sin(tick / 9) * 3 },
       mem: { total_kb: 2018400, used_kb: Math.round(memUsed), avail_kb: 1077000, cached_kb: 446000, zram_used_kb: 21000 },
-      disk: { root_total_kb: 31000000, root_used_kb: 9000000, root_free_kb: 22000000 },
+      disk: { root_total_kb: 30400000, root_used_kb: 22000000, root_free_kb: 8400000 },
       net: {
         wlan0: { rx_bps: 12000, tx_bps: 3400, ssid: "630", signal_dbm: -26, state: "up" },
-        end0: { state: "no-carrier", rx_bps: 0, tx_bps: 0 }
+        end0: { state: "no-carrier", rx_bps: 0, tx_bps: 0 },
+        wlx801f028e3491: { state: "down", rx_bps: 0, tx_bps: 0 }
       },
       top: [
         { pid: 1234, name: "codebuddy", cpu_pct: 12.4, mem_pct: 13.1 },

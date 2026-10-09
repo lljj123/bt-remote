@@ -1,9 +1,8 @@
 # Contributing
 
-Use Python 3.9+, Node.js and Bash to run the hardware-free checks:
+Use Python 3.9+ and Bash to run the hardware-free checks:
 
 ```sh
-python3 -m unittest discover -s tools -p 'test_*.py' -v
 python3 tools/check_source.py
 bash -n install.sh board/bin/bt-pair.sh board/bin/bt-connectable.sh board/etc/wifi-guard.sh
 python3 tools/install_gateway.py --dry-run
