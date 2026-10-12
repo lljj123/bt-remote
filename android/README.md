@@ -26,6 +26,8 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 解析器按连接隔离，终端期间阻止管理 JSON；断线或连接任务取消后旧线程不能覆盖新连接。令牌使用 Android Keystore 加密存储，旧 localStorage 值在成功迁移后清除。
 
+概览页的附加系统信息由 `app/src/main/assets/dashboard.html` 中的 `CUSTOM_INFO_COMMANDS` 数组驱动，调用网关 `term.exec`。以后调整显示项只需修改该数组并重新构建 APK。服务页的代理卡片调用 `proxy.status/switch/mode/onoff`，需要板端配置 mihomo external-controller。
+
 ## 许可证
 
 项目原创代码为 Apache-2.0；`app/src/main/assets/vendor/` 内 xterm.js 和 fit addon 为 MIT，完整声明随资源打包。

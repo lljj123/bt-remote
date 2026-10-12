@@ -22,7 +22,11 @@ def sources():
     try:
         probe = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True)
         if probe.returncode == 0 and Path(probe.stdout.strip()).resolve() == ROOT:
-            result = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
+            # Include untracked, non-ignored source files so a newly added file
+            # is checked before the first commit as well as afterwards.
+            result = subprocess.run(
+                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                cwd=ROOT, capture_output=True, check=True)
             return [p for p in result.stdout.decode("utf-8").split("\0") if p], True
     except (OSError, subprocess.SubprocessError):
         pass
@@ -56,7 +60,7 @@ def main():
     for name in ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "android/app/src/main/assets/vendor/LICENSE-xterm.txt"]:
         if not (ROOT / name).is_file(): errors.append("Missing notice: " + name)
     for error in errors: print("FAIL:", error)
-    print(f"Checked {len(files)} {'tracked' if tracked else 'source candidate'} files; {len(errors)} issue(s).")
+    print(f"Checked {len(files)} {'repository' if tracked else 'source candidate'} files; {len(errors)} issue(s).")
     if not tracked: print("No root Git repository detected: rerun after git add, and review Git history separately.")
     return bool(errors)
 

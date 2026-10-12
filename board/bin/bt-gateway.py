@@ -17,6 +17,7 @@ bt-gateway — 香橙派 3 LTS「蓝牙管控网关」
 import dbus
 import base64
 import binascii
+import concurrent.futures
 import dbus.service
 import fcntl
 import glob
@@ -36,6 +37,9 @@ import sys
 import termios
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from functools import wraps
 from datetime import datetime, timedelta
@@ -51,10 +55,14 @@ GUARD_SCRIPT = "/etc/bt-gateway/wifi-guard.sh"
 GUARD_FLAG = "/run/bt-gateway/wifi-switch-flag"
 GUARD_UNIT = "btg-wifi-guard"
 NETWORK_LOCK = threading.Lock()
+PROXY_LOCK = threading.Lock()
 TERM_PROTOCOL = "escaped-v1"
 TERM_MUX_PROTOCOL = "json-mux-v1"
 TERM_CHUNK = 2048
 TERM_INPUT_LIMIT = 65536
+TERM_EXEC_COMMAND_MAX = 2048
+TERM_EXEC_OUTPUT_MAX = 2048
+TERM_EXEC_TIMEOUT_MAX = 120.0
 SOCK_PATH = "/run/bt-gateway.sock"
 NETPLAN_WIFI = os.environ.get("BTG_NETPLAN_WIFI", "/etc/netplan/30-wifis-dhcp.yaml")
 NETPLAN_GLOB = "/etc/netplan/*.yaml"
@@ -72,7 +80,14 @@ SRV_NAME = "OrangePi 3LTS Gateway"
 VER = 1
 DEV_ID = "orangepi-3lts"
 DEV_NAME = os.environ.get("BTG_DEV_NAME", "Orange Pi Bluetooth Gateway")
-CAPS = ["sys", "svc", "net", "pwr", "log", "term"]
+CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy"]
+
+MIHOMO_API = os.environ.get("BTG_MIHOMO_API", "").rstrip("/")
+MIHOMO_SECRET_FILE = os.environ.get("BTG_MIHOMO_SECRET_FILE", "")
+MIHOMO_TEST_URL = os.environ.get(
+    "BTG_MIHOMO_TEST_URL", "https://www.gstatic.com/generate_204")
+MIHOMO_GROUP = os.environ.get("BTG_MIHOMO_GROUP", "")
+MIHOMO_RESPONSE_MAX = 1024 * 1024
 
 MAX_LINE = 4096
 AUTH_TIMEOUT = 30.0
@@ -225,6 +240,149 @@ class CmdError(Exception):
         super().__init__(msg)
         self.code = code
         self.msg = msg
+
+
+# ------------------------------------------------------------------ mihomo API
+def _mihomo_secret():
+    if not MIHOMO_SECRET_FILE:
+        return ""
+    secret = rd(MIHOMO_SECRET_FILE)
+    if not secret:
+        raise CmdError("E_PROXY_CONFIG", "mihomo secret file is missing or empty")
+    return secret
+
+
+def _proxy_http(method, path, payload=None, timeout=8.0):
+    if not MIHOMO_API:
+        raise CmdError("E_PROXY_CONFIG", "BTG_MIHOMO_API is not configured")
+    body = None
+    headers = {"Accept": "application/json"}
+    secret = _mihomo_secret()
+    if secret:
+        headers["Authorization"] = "Bearer " + secret
+    if payload is not None:
+        body = jdump(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        MIHOMO_API + "/" + path.lstrip("/"), data=body,
+        headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(MIHOMO_RESPONSE_MAX + 1)
+            status = response.status
+    except urllib.error.HTTPError as error:
+        detail = error.read(512).decode("utf-8", "replace").strip()
+        if error.code in (401, 403):
+            code = "E_PROXY_AUTH"
+        elif error.code == 404:
+            code = "E_PROXY_NOTFOUND"
+        else:
+            code = "E_PROXY_HTTP"
+        raise CmdError(code, "mihomo HTTP %s%s" % (
+            error.code, (": " + detail[:200]) if detail else ""))
+    except (socket.timeout, TimeoutError):
+        raise CmdError("E_PROXY_TIMEOUT", "mihomo request timed out")
+    except urllib.error.URLError as error:
+        reason = getattr(error, "reason", error)
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            raise CmdError("E_PROXY_TIMEOUT", "mihomo request timed out")
+        raise CmdError("E_PROXY_CONNECT", "cannot reach mihomo: %s" % reason)
+    except OSError as error:
+        raise CmdError("E_PROXY_CONNECT", "cannot reach mihomo: %s" % error)
+    if len(raw) > MIHOMO_RESPONSE_MAX:
+        raise CmdError("E_PROXY_SIZE", "mihomo response exceeds size limit")
+    if status == 204 or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise CmdError("E_PROXY_DATA", "mihomo returned invalid JSON")
+    return data
+
+
+def _proxy_dict(method, path, payload=None, timeout=8.0):
+    data = _proxy_http(method, path, payload, timeout)
+    if not isinstance(data, dict):
+        raise CmdError("E_PROXY_DATA", "mihomo response must be an object")
+    return data
+
+
+def _proxy_inventory():
+    data = _proxy_dict("GET", "/proxies")
+    proxies = data.get("proxies")
+    if not isinstance(proxies, dict):
+        raise CmdError("E_PROXY_DATA", "mihomo proxies map is missing")
+    return proxies
+
+
+def _proxy_group(proxies, requested=None):
+    wanted = requested or MIHOMO_GROUP
+    if wanted:
+        group = proxies.get(wanted)
+        if not isinstance(group, dict) or not isinstance(group.get("all"), list):
+            raise CmdError("E_PROXY_NOTFOUND", "mihomo selector group not found: %s" % wanted)
+        return wanted, group
+    selectors = [(name, value) for name, value in proxies.items()
+                 if isinstance(value, dict) and value.get("type") == "Selector"
+                 and isinstance(value.get("all"), list)]
+    if not selectors:
+        raise CmdError("E_PROXY_NOTFOUND", "mihomo has no selector group")
+    preferred = ("PROXY", "Proxy", "proxy", "节点选择", "代理", "GLOBAL")
+    for name in preferred:
+        for candidate, group in selectors:
+            if candidate == name:
+                return candidate, group
+    non_global = [(name, group) for name, group in selectors if name != "GLOBAL"]
+    return (non_global or selectors)[0]
+
+
+def _proxy_last_delay(proxy):
+    history = proxy.get("history") if isinstance(proxy, dict) else None
+    if not isinstance(history, list):
+        return None
+    for item in reversed(history):
+        delay = item.get("delay") if isinstance(item, dict) else None
+        if type(delay) is int and delay > 0:
+            return delay
+    return None
+
+
+def _proxy_nodes(proxies, group):
+    current = group.get("now") if isinstance(group.get("now"), str) else ""
+    nodes = []
+    for name in group.get("all", []):
+        if not isinstance(name, str):
+            continue
+        item = proxies.get(name, {})
+        nodes.append({"name": name,
+                      "type": item.get("type", "") if isinstance(item, dict) else "",
+                      "delay": _proxy_last_delay(item),
+                      "selected": name == current})
+    return current, nodes
+
+
+def _proxy_delay_value(name, timeout_ms):
+    query = urllib.parse.urlencode({"url": MIHOMO_TEST_URL,
+                                    "timeout": timeout_ms,
+                                    "expected": "200-299"})
+    path = "/proxies/%s/delay?%s" % (urllib.parse.quote(name, safe=""), query)
+    data = _proxy_dict("GET", path, timeout=max(2.0, timeout_ms / 1000.0 + 2.0))
+    delay = data.get("delay")
+    if type(delay) is not int or delay <= 0:
+        raise CmdError("E_PROXY_DATA", "mihomo returned invalid delay")
+    return delay
+
+
+def _proxy_lock(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if not PROXY_LOCK.acquire(blocking=False):
+            raise CmdError("E_BUSY", "another proxy operation is running")
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            PROXY_LOCK.release()
+    return wrapped
 
 
 def bt_adapter_addr():
@@ -1152,6 +1310,153 @@ def cmd_log_follow(sess, a):
     return {"ok": True, "unit": unit, "on": on}
 
 
+# ------------------------------------------------------------------ proxy.*
+def cmd_proxy_status(_s, a):
+    a = a or {}
+    if not isinstance(a, dict):
+        raise CmdError("E_ARGS", "args must be object")
+    refresh = a.get("refresh", False)
+    if type(refresh) is not bool:
+        raise CmdError("E_ARGS", "refresh must be boolean")
+    empty = {"configured": bool(MIHOMO_API), "reachable": False,
+             "running": False, "version": "", "mode": "direct",
+             "group": MIHOMO_GROUP, "current": "", "nodes": []}
+    if not MIHOMO_API:
+        return empty
+    try:
+        configs = _proxy_dict("GET", "/configs")
+        proxies = _proxy_inventory()
+        group_name, group = _proxy_group(proxies)
+        current, nodes = _proxy_nodes(proxies, group)
+        if refresh and nodes:
+            if not PROXY_LOCK.acquire(blocking=False):
+                raise CmdError("E_BUSY", "another proxy operation is running")
+            try:
+                testable = [n for n in nodes if n["type"] not in (
+                    "Selector", "URLTest", "Fallback", "LoadBalance",
+                    "Direct", "Reject", "Pass")][:32]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    futures = {pool.submit(_proxy_delay_value, n["name"], 3000): n
+                               for n in testable}
+                    for future, node in futures.items():
+                        try:
+                            node["delay"] = future.result()
+                        except CmdError:
+                            node["delay"] = None
+            finally:
+                PROXY_LOCK.release()
+        mode = str(configs.get("mode", "rule")).lower()
+        version = ""
+        try:
+            version_data = _proxy_dict("GET", "/version")
+            version = str(version_data.get("version", ""))[:128]
+        except CmdError:
+            pass
+        return {"configured": True, "reachable": True,
+                "running": mode != "direct", "version": version,
+                "mode": mode, "group": group_name,
+                "current": current, "nodes": nodes}
+    except CmdError as error:
+        if error.code in ("E_PROXY_CONNECT", "E_PROXY_TIMEOUT", "E_PROXY_AUTH"):
+            empty.update({"error": error.code, "message": error.msg})
+            return empty
+        raise
+
+
+def cmd_proxy_groups(_s, _a):
+    proxies = _proxy_inventory()
+    result = []
+    for name, item in proxies.items():
+        if not isinstance(item, dict) or not isinstance(item.get("all"), list):
+            continue
+        result.append({"name": name, "type": item.get("type", ""),
+                       "now": item.get("now", ""), "count": len(item["all"]),
+                       "selectable": item.get("type") == "Selector"})
+    return result
+
+
+def cmd_proxy_nodes(_s, a):
+    a = a or {}
+    if not isinstance(a, dict):
+        raise CmdError("E_ARGS", "args must be object")
+    group_name = a.get("group")
+    if group_name is not None and not isinstance(group_name, str):
+        raise CmdError("E_ARGS", "group must be string")
+    proxies = _proxy_inventory()
+    _name, group = _proxy_group(proxies, group_name)
+    _current, nodes = _proxy_nodes(proxies, group)
+    return nodes
+
+
+@_proxy_lock
+def cmd_proxy_select(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_ARGS", "args must be object")
+    group_name, name = a.get("group"), a.get("name")
+    if not isinstance(group_name, str) or not isinstance(name, str) or not name:
+        raise CmdError("E_ARGS", "group and name must be non-empty strings")
+    proxies = _proxy_inventory()
+    selected_group, group = _proxy_group(proxies, group_name)
+    if name not in group.get("all", []):
+        raise CmdError("E_PROXY_NOTFOUND", "node is not in selector group")
+    _proxy_http("PUT", "/proxies/" + urllib.parse.quote(selected_group, safe=""),
+                {"name": name})
+    return {"group": selected_group, "name": name, "accepted": True}
+
+
+@_proxy_lock
+def cmd_proxy_switch(_s, a):
+    if not isinstance(a, dict) or not isinstance(a.get("name"), str) or not a["name"]:
+        raise CmdError("E_ARGS", "name must be a non-empty string")
+    name = a["name"]
+    if len(name.encode("utf-8")) > 256:
+        raise CmdError("E_ARGS", "node name is too long")
+    proxies = _proxy_inventory()
+    group_name, group = _proxy_group(proxies)
+    if name not in group.get("all", []):
+        raise CmdError("E_PROXY_NOTFOUND", "node is not in configured selector group")
+    _proxy_http("PUT", "/proxies/" + urllib.parse.quote(group_name, safe=""),
+                {"name": name})
+    return {"group": group_name, "name": name, "accepted": True}
+
+
+@_proxy_lock
+def cmd_proxy_mode(_s, a):
+    a = a or {}
+    if not isinstance(a, dict):
+        raise CmdError("E_ARGS", "args must be object")
+    mode = a.get("mode")
+    if mode is None:
+        data = _proxy_dict("GET", "/configs")
+        return {"mode": str(data.get("mode", "rule")).lower(), "accepted": True}
+    if mode not in ("rule", "global", "direct"):
+        raise CmdError("E_ARGS", "mode must be rule|global|direct")
+    _proxy_http("PATCH", "/configs", {"mode": mode})
+    return {"mode": mode, "accepted": True}
+
+
+@_proxy_lock
+def cmd_proxy_onoff(_s, a):
+    if not isinstance(a, dict) or type(a.get("on")) is not bool:
+        raise CmdError("E_ARGS", "on must be boolean")
+    mode = "rule" if a["on"] else "direct"
+    _proxy_http("PATCH", "/configs", {"mode": mode})
+    return {"on": a["on"], "mode": mode, "accepted": True}
+
+
+@_proxy_lock
+def cmd_proxy_delay(_s, a):
+    if not isinstance(a, dict) or not isinstance(a.get("name"), str) or not a["name"]:
+        raise CmdError("E_ARGS", "name must be a non-empty string")
+    try:
+        timeout_ms = int(a.get("timeout_ms", 3000))
+    except (TypeError, ValueError):
+        raise CmdError("E_ARGS", "timeout_ms must be integer")
+    timeout_ms = max(500, min(5000, timeout_ms))
+    return {"name": a["name"],
+            "delay": _proxy_delay_value(a["name"], timeout_ms)}
+
+
 # ------------------------------------------------------------------ term.*
 def _set_winsize(fd, cols, rows):
     cols = max(TERM_MIN_COLS, min(TERM_MAX_COLS, int(cols)))
@@ -1161,6 +1466,132 @@ def _set_winsize(fd, cols, rows):
     except Exception:
         pass
     return cols, rows
+
+
+def cmd_term_caps(_s, _a):
+    return {
+        "interactive_root": True,
+        "restricted": False,
+        "protocols": [TERM_PROTOCOL, TERM_MUX_PROTOCOL],
+        "shells": list(SHELL_WHITELIST),
+        "allow": ["*"],
+        "max_out_kb": TERM_EXEC_OUTPUT_MAX // 1024,
+        "exec": {"name": "term.exec",
+                 "max_command_bytes": TERM_EXEC_COMMAND_MAX,
+                 "max_output_bytes": TERM_EXEC_OUTPUT_MAX,
+                 "timeout_s_max": int(TERM_EXEC_TIMEOUT_MAX)},
+    }
+
+
+def cmd_term_exec(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_ARGS", "args must be object")
+    command = a.get("command")
+    if not isinstance(command, str) or not command.strip() or "\x00" in command:
+        raise CmdError("E_ARGS", "command must be a non-empty string without NUL")
+    if len(command.encode("utf-8")) > TERM_EXEC_COMMAND_MAX:
+        raise CmdError("E_ARGS", "command exceeds %d bytes" % TERM_EXEC_COMMAND_MAX)
+    timeout_s = a.get("timeout_s", 15)
+    if (not isinstance(timeout_s, (int, float)) or isinstance(timeout_s, bool)
+            or timeout_s <= 0):
+        raise CmdError("E_ARGS", "timeout_s must be a positive number")
+    timeout_s = min(float(timeout_s), TERM_EXEC_TIMEOUT_MAX)
+    output_limit = a.get("max_output_bytes", TERM_EXEC_OUTPUT_MAX)
+    if type(output_limit) is not int:
+        raise CmdError("E_ARGS", "max_output_bytes must be integer")
+    output_limit = max(256, min(output_limit, TERM_EXEC_OUTPUT_MAX))
+
+    env = {"HOME": "/root", "USER": "root", "LOGNAME": "root",
+           "SHELL": "/bin/bash", "LANG": "C.UTF-8",
+           "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            ["/bin/bash", "--noprofile", "--norc", "-c", command],
+            cwd="/root" if os.access("/root", os.X_OK) else "/", env=env,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=True)
+    except OSError as error:
+        raise CmdError("E_EXEC", "cannot start command: %s" % error)
+
+    output = bytearray()
+    output_bytes = 0
+    truncated = False
+    timed_out = False
+    eof = False
+    drain_deadline = None
+    fd = process.stdout.fileno()
+    os.set_blocking(fd, False)
+    deadline = started + timeout_s
+    try:
+        while not eof:
+            now = time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0 and not timed_out:
+                timed_out = True
+                drain_deadline = now + 1.0
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            # A command can detach a child into another session while keeping
+            # stdout open.  Do not let that escaped file descriptor hold the
+            # Bluetooth request forever after the advertised timeout.
+            if drain_deadline is not None and now >= drain_deadline:
+                break
+            wait_for = (drain_deadline - now) if drain_deadline is not None else remaining
+            ready, _, _ = select.select([fd], [], [], max(0.0, min(0.1, wait_for)))
+            if ready:
+                try:
+                    chunk = os.read(fd, 8192)
+                except BlockingIOError:
+                    chunk = None
+                if chunk == b"":
+                    eof = True
+                elif chunk:
+                    output_bytes += len(chunk)
+                    room = output_limit - len(output)
+                    if room > 0:
+                        output.extend(chunk[:room])
+                    if len(chunk) > room:
+                        truncated = True
+            if process.poll() is not None and not ready:
+                try:
+                    chunk = os.read(fd, 8192)
+                except BlockingIOError:
+                    chunk = None
+                if chunk == b"":
+                    eof = True
+                elif chunk:
+                    output_bytes += len(chunk)
+                    room = output_limit - len(output)
+                    if room > 0:
+                        output.extend(chunk[:room])
+                    if len(chunk) > room:
+                        truncated = True
+        try:
+            exit_code = process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            exit_code = process.wait(timeout=2)
+    finally:
+        try:
+            process.stdout.close()
+        except Exception:
+            pass
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            process.wait()
+    if output_bytes > len(output):
+        truncated = True
+    return {"exit_code": exit_code,
+            "output_b64": base64.b64encode(bytes(output)).decode("ascii"),
+            "output_bytes": output_bytes, "truncated": truncated,
+            "timed_out": timed_out,
+            "duration_ms": int((time.monotonic() - started) * 1000)}
 
 
 def cmd_term_shell(sess, a):
@@ -1231,6 +1662,16 @@ COMMANDS = {
     "pwr.rtc.set": cmd_pwr_rtc_set,
     "log.tail": cmd_log_tail,
     "log.follow": cmd_log_follow,
+    "proxy.status": cmd_proxy_status,
+    "proxy.groups": cmd_proxy_groups,
+    "proxy.nodes": cmd_proxy_nodes,
+    "proxy.select": cmd_proxy_select,
+    "proxy.switch": cmd_proxy_switch,
+    "proxy.mode": cmd_proxy_mode,
+    "proxy.onoff": cmd_proxy_onoff,
+    "proxy.delay": cmd_proxy_delay,
+    "term.caps": cmd_term_caps,
+    "term.exec": cmd_term_exec,
     "term.shell": cmd_term_shell,
 }
 
@@ -2104,6 +2545,16 @@ def main():
         return 1
     if not os.path.isabs(NETPLAN_WIFI) or "\n" in NETPLAN_WIFI:
         log("BTG_NETPLAN_WIFI must be an absolute path without newlines", logging.ERROR)
+        return 1
+    if MIHOMO_API:
+        parsed_api = urllib.parse.urlparse(MIHOMO_API)
+        if parsed_api.scheme not in ("http", "https") or not parsed_api.netloc:
+            log("BTG_MIHOMO_API must be an absolute http(s) URL", logging.ERROR)
+            return 1
+    if MIHOMO_SECRET_FILE and (not os.path.isabs(MIHOMO_SECRET_FILE)
+                               or "\n" in MIHOMO_SECRET_FILE):
+        log("BTG_MIHOMO_SECRET_FILE must be an absolute path without newlines",
+            logging.ERROR)
         return 1
     if not rd(TOKEN_FILE):
         log("token file %s missing — 先跑安装步骤" % TOKEN_FILE, logging.ERROR)

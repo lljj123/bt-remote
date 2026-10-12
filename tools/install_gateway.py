@@ -35,7 +35,9 @@ def run(argv, timeout=120):
 
 def target(prefix, relative):
     result = prefix / relative
-    if not result.resolve().is_relative_to(prefix.resolve()):
+    try:
+        result.resolve().relative_to(prefix.resolve())
+    except ValueError:
         raise RuntimeError("Destination escapes installation root: " + str(result))
     if result.is_symlink():
         raise RuntimeError("Refusing to overwrite symlink: " + str(result))
@@ -103,8 +105,8 @@ def main(argv=None):
     parser.add_argument("--no-deps", action="store_true", help="dependencies already installed (offline update)")
     parser.add_argument("--destdir", type=Path, help="stage files under this directory; no token or system changes")
     args = parser.parse_args(argv)
-    if sys.version_info < (3, 9):
-        parser.error("Python 3.9+ required")
+    if sys.version_info < (3, 8):
+        parser.error("Python 3.8+ required")
     prefix = args.destdir.resolve() if args.destdir else Path("/")
     if args.destdir and prefix == Path(prefix.anchor):
         parser.error("--destdir must not be the filesystem root")

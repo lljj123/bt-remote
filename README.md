@@ -1,12 +1,12 @@
 # bt-remote · 香橙派蓝牙管理网关
 
-Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、Netplan WiFi 配置、日志、RTC 设置和交互 root 终端。
+Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、Netplan WiFi 配置、日志、RTC 设置、mihomo 代理控制、交互 root 终端和单次 `term.exec` 命令。
 
 原创代码使用 **Apache-2.0**，第三方代码保留原许可证，详见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 ## 一键安装（在板子上运行）
 
-需要已安装蓝牙驱动的 Debian 系发行版、systemd、Python 3.9+、可用的经典蓝牙控制器 `hci0`。手机最低 Android 7 / API 24，运行时需授予附近设备权限。BLE-only 设备和 iOS 不支持本项目的 SPP 客户端。
+需要已安装蓝牙驱动的 Debian 系发行版、systemd、Python 3.8+、可用的经典蓝牙控制器 `hci0`。手机最低 Android 7 / API 24，运行时需授予附近设备权限。BLE-only 设备和 iOS 不支持本项目的 SPP 客户端。
 
 把完整源码放到板子上，在项目目录运行：
 
@@ -73,7 +73,15 @@ sudo bt-remote uninstall     # 卸载程序和自启单元，保留令牌、配�
 BTG_WLAN=wlan0
 BTG_NETPLAN_WIFI=/etc/netplan/30-wifis-dhcp.yaml
 BTG_DEV_NAME="Orange Pi Bluetooth Gateway"
+# 可选：mihomo external-controller
+BTG_MIHOMO_API=http://127.0.0.1:9090
+BTG_MIHOMO_SECRET_FILE=/etc/mihomo/secret
+BTG_MIHOMO_GROUP=PROXY
 ```
+
+代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件和 Selector 策略组，随后执行 `sudo bt-remote restart`。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
+
+App 概览里的“自定义系统信息”由 `dashboard.html` 的 `CUSTOM_INFO_COMMANDS` 数组定义。网关提供通用 `term.exec`，因此后续增删只读系统查询只需修改并重新构建 APK，不必再为每个字段增加网关命令。`term.exec` 与交互终端一样拥有 root 权限，具体协议见 [网关协议 v2](docs/gateway-protocol-v2.md)。
 
 WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。默认配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
 

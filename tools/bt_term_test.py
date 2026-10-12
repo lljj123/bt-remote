@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run on the board: real Unix-socket / root PTY smoke test (no network changes)."""
 import json
+import base64
 import socket
 import time
 
@@ -71,6 +72,11 @@ def main():
         assert peer.line().get("term_protocol") == "escaped-v1"
         peer.send({"t": "auth", "token": token})
         assert peer.line().get("ok") is True
+        peer.send({"t": "cmd", "id": 100, "name": "term.exec",
+                   "args": {"command": "printf bt-exec-ok"}})
+        executed = peer.response(100)["data"]
+        assert base64.b64decode(executed["output_b64"]) == b"bt-exec-ok", executed
+        print("PASS: term.exec bounded root command")
         for session in range(2):
             rid = session * 2 + 1
             peer.send({"t": "cmd", "id": rid, "name": "term.shell",

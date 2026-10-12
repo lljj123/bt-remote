@@ -1,6 +1,6 @@
 # Contributing
 
-Use Python 3.9+ and Bash to run the hardware-free checks:
+Use Python 3.8+ and Bash to run the hardware-free checks:
 
 ```sh
 python3 tools/check_source.py

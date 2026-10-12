@@ -146,6 +146,28 @@
   #tab-tty.fs .card{max-width:none;height:100%;display:flex;flex-direction:column;margin-bottom:0}
   #tab-tty.fs #termWrap{flex:1;min-height:0}
   #tab-tty.fs #ttyShellWrap{flex:1;min-height:0;display:flex;flex-direction:column}
+
+  /* 折叠卡片 */
+  .fold-head{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+  .fold-head h2{margin:0;flex:1;min-width:0}
+  .fold-chev{width:16px;height:16px;transition:transform .2s;flex:0 0 auto;color:var(--muted);display:block}
+  .fold.collapsed .fold-chev{transform:rotate(-90deg)}
+  .fold.collapsed .fold-body{display:none}
+
+  /* 开关 */
+  .switch{width:44px;height:24px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+    position:relative;flex:0 0 auto;cursor:pointer;transition:background .2s,border-color .2s}
+  .switch i{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+    background:var(--muted);transition:transform .2s,background .2s}
+  .switch.on{background:rgba(59,130,246,.28);border-color:var(--accent)}
+  .switch.on i{transform:translateX(20px);background:var(--accent)}
+  .switch.disabled{opacity:.45;pointer-events:none}
+
+  /* 代理模式分段 */
+  .mode-bar{display:flex;gap:6px;margin:10px 0}
+  .mode-bar button{flex:1;padding:7px 0;font-size:12px;border-radius:8px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .mode-bar button.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
 </style>
 </head>
 <body>
@@ -212,6 +234,13 @@
       <div class="kv"><b>负载</b><span id="iLoad">--</span></div>
     </div>
 
+    <div class="card" id="customInfoCard">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 9l2 2-2 2M12 13h4"/></svg>自定义系统信息
+        <button class="ghost" id="btnCustomInfo" style="margin-left:auto;padding:4px 9px">刷新</button>
+      </h2>
+      <div id="customInfoList"><div class="dim" style="font-size:12px">连接后通过 term.exec 获取</div></div>
+    </div>
+
     <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络接口</h2>
       <div id="ifaceList"></div>
@@ -238,10 +267,40 @@
 
   <!-- 服务 -->
   <section id="tab-svc" class="hide">
-    <div class="card">
-      <h2>系统服务（白名单 5 个）</h2>
-      <button class="ghost" id="btnSvcReload" style="margin-bottom:4px">刷新</button>
-      <div id="svcList"></div>
+    <div class="card fold" id="foldSvc">
+      <div class="fold-head">
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>系统服务</h2>
+        <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="fold-body">
+        <button class="ghost" id="btnSvcReload" style="margin:4px 0 6px">刷新</button>
+        <div id="svcList"></div>
+      </div>
+    </div>
+
+    <div class="card fold" id="foldProxy">
+      <div class="fold-head">
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>代理服务</h2>
+        <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="fold-body">
+        <div class="li" style="padding-top:0">
+          <div class="nm">代理开关<div class="sub" id="proxyStatus">读取中…</div></div>
+          <div class="switch disabled" id="proxySwitch"><i></i></div>
+        </div>
+        <div class="mode-bar">
+          <button data-mode="rule" class="active">绕过大陆</button>
+          <button data-mode="global">全局</button>
+          <button data-mode="direct">直连</button>
+        </div>
+        <div class="kv"><b>当前策略组</b><span id="proxyGroup">--</span></div>
+        <div class="kv"><b>当前节点</b><span id="proxyCur">--</span></div>
+        <div id="proxyList"></div>
+        <div class="row2" style="margin-top:12px">
+          <button class="ghost" id="btnProxyRefresh" style="flex:1">刷新延迟</button>
+          <button class="danger" id="btnProxyClear" style="flex:1">全部直连</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -417,6 +476,7 @@ let pollTimer = null, infoTimer = null, subOk = false;
 let wantConnected = false, retryTimer = null, retryStep = 0;
 let following = false, followUnit = "";
 let devInfo = null, devInfoAt = 0;
+let gatewayCaps = [], terminalCaps = null, execAvailable = null;
 const cpuHist = [], memHist = [];
 let lastMetrics = null;
 
@@ -449,6 +509,15 @@ const ERR_HINT = {
   E_IN_USE: "该网络正在使用中",
   E_RTC: "RTC 操作失败",
   E_LOG: "日志读取失败",
+  E_EXEC: "命令启动失败",
+  E_PROXY_AUTH: "Mihomo 控制器认证失败",
+  E_PROXY_CONFIG: "Mihomo 尚未配置",
+  E_PROXY_CONNECT: "无法连接 Mihomo 控制器",
+  E_PROXY_DATA: "Mihomo 返回了异常数据",
+  E_PROXY_HTTP: "Mihomo 控制器请求失败",
+  E_PROXY_NOTFOUND: "没有找到代理组或节点",
+  E_PROXY_SIZE: "Mihomo 返回数据过大",
+  E_PROXY_TIMEOUT: "Mihomo 请求超时",
   E_BUSY: "板端正忙（已有终端任务在跑），稍后再试",
   E_TIMEOUT: "板端执行超时",
   E_INTERNAL: "板端内部错误"
@@ -512,6 +581,8 @@ function feed(line) {
     if (m.ok) {
       resetShell();
       authed = true; connected = true; wantConnected = true; retryStep = 0;
+      gatewayCaps = Array.isArray(m.caps) ? m.caps.slice() : [];
+      terminalCaps = null; execAvailable = null;
       $("#btnConn").textContent = "断开";
       setConn("on", "已连接");
       toast("鉴权通过");
@@ -519,6 +590,8 @@ function feed(line) {
       loadSysInfo();
       loadOverview();
       refreshServices();
+      loadProxy(false);
+      loadCapabilities().then(loadCustomInfo);
       /* 每次重建连接，终端相位都是干净的（裸相位不会跨连接存活） */
     } else {
       authed = false;
@@ -640,6 +713,7 @@ function onState(state, info) {
   } else if (state === "disconnected" || state === "error") {
     connecting = false;
     connected = false; authed = false;
+    gatewayCaps = []; terminalCaps = null; execAvailable = null;
     stopStream(); clearPending(); stopFollow();
     resetShell();                 // 裸相位不会跨连接存活，必须复位
     if (state === "error") {
@@ -799,6 +873,70 @@ async function loadSysInfo() {
     $("#iModel").textContent = devInfo.model || "--";
   } catch (e) { }
 }
+
+/*
+ * 只改这里就能增删“自定义系统信息”，网关无需再加专用命令。
+ * term.exec 是已鉴权的 root 单次命令；命令应保持只读、快速、输出简短。
+ */
+const CUSTOM_INFO_COMMANDS = [
+  { label: "系统架构", command: "uname -m" },
+  { label: "CPU 核心", command: "nproc" },
+  { label: "主 IP", command: "hostname -I | awk '{print $1}'" },
+  { label: "登录用户", command: "who | wc -l" }
+];
+
+async function loadCapabilities() {
+  if (!authed) return null;
+  try {
+    terminalCaps = await send("term.caps");
+    execAvailable = !!(terminalCaps.exec && terminalCaps.exec.name === "term.exec");
+  } catch (e) {
+    terminalCaps = null;
+    execAvailable = false;
+  }
+  return terminalCaps;
+}
+
+function execText(result) {
+  if (!result || !result.output_b64) return "";
+  try { return new TextDecoder("utf-8").decode(b64ToU8(result.output_b64)); }
+  catch (e) { return ""; }
+}
+
+async function loadCustomInfo() {
+  const box = $("#customInfoList");
+  if (!authed) return;
+  if (execAvailable == null) await loadCapabilities();
+  if (!execAvailable) {
+    box.innerHTML = "<div class='note warn'>当前板端没有 term.exec，请先升级网关。</div>";
+    return;
+  }
+  box.innerHTML = "";
+  for (const item of CUSTOM_INFO_COMMANDS) {
+    const row = document.createElement("div");
+    row.className = "kv";
+    const key = document.createElement("b");
+    const value = document.createElement("span");
+    key.textContent = item.label;
+    value.textContent = "读取中…";
+    row.appendChild(key); row.appendChild(value); box.appendChild(row);
+    try {
+      const result = await send("term.exec", {
+        command: item.command, timeout_s: 8, max_output_bytes: 1024
+      }, 12000);
+      const text = execText(result).trim().replace(/\s+/g, " ");
+      value.textContent = text || (result.timed_out ? "超时" : "--");
+      if (result.exit_code !== 0 || result.timed_out) value.style.color = "var(--warn)";
+      value.title = item.command;
+    } catch (e) {
+      value.textContent = "读取失败";
+      value.style.color = "var(--bad)";
+      value.title = e.message;
+    }
+  }
+}
+$("#btnCustomInfo").onclick = loadCustomInfo;
+
 function uptimeSec() {
   if (!devInfo) return null;
   return (devInfo.uptime_s || 0) + Math.floor((Date.now() - devInfoAt) / 1000);
@@ -975,6 +1113,106 @@ async function refreshServices() {
   } catch (e) { toast("服务列表获取失败：" + e.message); }
 }
 $("#btnSvcReload").onclick = refreshServices;
+
+/* ============ 折叠卡片 ============ */
+document.querySelectorAll(".fold-head").forEach(h => {
+  h.onclick = () => h.closest(".fold").classList.toggle("collapsed");
+});
+
+/* ============ 代理控制（网关转发到 mihomo external-controller） ============ */
+let proxyState = { configured: false, reachable: false, running: false,
+  mode: "direct", group: "", current: "", nodes: [], busy: false, error: "" };
+
+function renderProxy() {
+  const p = proxyState;
+  const usable = p.configured && p.reachable && !p.busy;
+  $("#proxySwitch").classList.toggle("on", p.running);
+  $("#proxySwitch").classList.toggle("disabled", !usable);
+  let status = p.busy ? "操作中…" : p.configured ? (p.reachable ?
+    (p.running ? "代理路由已启用" : "当前为直连") : "Mihomo 不可达") : "Mihomo 未配置";
+  if (p.error) status += " · " + p.error;
+  $("#proxyStatus").textContent = status;
+  document.querySelectorAll(".mode-bar button").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === p.mode);
+    b.disabled = !usable;
+  });
+  $("#proxyGroup").textContent = p.group || "--";
+  $("#proxyCur").textContent = p.current || "--";
+  $("#btnProxyRefresh").disabled = !usable;
+  $("#btnProxyClear").disabled = !usable;
+  const box = $("#proxyList");
+  box.innerHTML = "";
+  if (!p.nodes || !p.nodes.length) {
+    box.innerHTML = "<div class='dim' style='font-size:12px'>（暂无可选节点）</div>";
+    return;
+  }
+  p.nodes.forEach(n => {
+    const cur = n.name === p.current;
+    const div = document.createElement("div");
+    div.className = "li";
+    div.style.cursor = usable ? "pointer" : "default";
+    div.innerHTML =
+      "<div class='nm'>" + esc(n.name) +
+      (n.type ? "<div class='sub'>" + esc(n.type) + "</div>" : "") + "</div>" +
+      "<span class='pill " + (cur ? "ok" : (n.delay != null ? "" : "off")) + "'>" +
+      (cur ? "当前 · " : "") + (n.delay != null ? n.delay + "ms" : "--") + "</span>";
+    if (usable) div.onclick = () => proxyAction("proxy.switch", { name: n.name }, "节点已切换");
+    box.appendChild(div);
+  });
+}
+
+async function proxyAction(name, args, message) {
+  if (proxyState.busy) return;
+  proxyState.busy = true; proxyState.error = ""; renderProxy();
+  try {
+    await send(name, args, 20000);
+    if (message) toast(message);
+    await loadProxy(false);
+  } catch (e) {
+    proxyState.busy = false; proxyState.error = e.message; renderProxy();
+    toast("代理操作失败：" + e.message);
+  }
+}
+
+$("#proxySwitch").onclick = () => {
+  if (proxyState.configured && proxyState.reachable)
+    proxyAction("proxy.onoff", { on: !proxyState.running }, !proxyState.running ? "代理已开启" : "已切到直连");
+};
+document.querySelectorAll(".mode-bar button").forEach(b => {
+  b.onclick = () => proxyAction("proxy.mode", { mode: b.dataset.mode }, "代理模式已更新");
+});
+$("#btnProxyClear").onclick = () => proxyAction("proxy.mode", { mode: "direct" }, "已切到全部直连");
+$("#btnProxyRefresh").onclick = () => loadProxy(true);
+
+async function loadProxy(refresh) {
+  if (!authed && isNative) return;
+  if (!isNative) {
+    proxyState = { configured: true, reachable: true, running: true, mode: "rule",
+      group: "PROXY", current: "日本 · 东京-01", busy: false, error: "",
+      nodes: [{ name: "香港 · 01", type: "Shadowsocks", delay: 58 },
+        { name: "日本 · 东京-01", type: "Shadowsocks", delay: 45 },
+        { name: "新加坡 · 02", type: "Vmess", delay: 89 }] };
+    renderProxy(); return;
+  }
+  if (gatewayCaps.length && !gatewayCaps.includes("proxy")) {
+    proxyState = { configured: false, reachable: false, running: false, mode: "direct",
+      group: "", current: "", nodes: [], busy: false, error: "需升级网关" };
+    renderProxy(); return;
+  }
+  proxyState.busy = true; proxyState.error = ""; renderProxy();
+  try {
+    const d = await send("proxy.status", { refresh: !!refresh }, refresh ? 45000 : 20000);
+    proxyState = Object.assign({ configured: false, reachable: false, running: false,
+      mode: "direct", group: "", current: "", nodes: [], busy: false, error: "" }, d);
+    proxyState.busy = false;
+    if (d.error) proxyState.error = d.error;
+    renderProxy();
+    if (refresh && d.reachable) toast("节点延迟已刷新");
+  } catch (e) {
+    proxyState.busy = false; proxyState.error = e.message; renderProxy();
+    toast("代理状态获取失败：" + e.message);
+  }
+}
 
 /* ============ 渲染：网络 ============ */
 async function loadNetwork() {
@@ -1185,7 +1423,7 @@ function switchTab(name) {
   });
   TAB_ORDER.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== name));
   if (name !== "tty") setTtyFull(false);   // 切走终端页时退出全屏
-  if (name === "svc") refreshServices();
+  if (name === "svc") { refreshServices(); loadProxy(false); }
   if (name === "net") { loadNetwork(); loadSaved(); }
   if (name === "ov") loadOverview();
   if (name === "tty") onTtyOpen();
@@ -1239,7 +1477,7 @@ let sticky = null;                 // 粘滞修饰键：null | ctrl | alt
 let fitT = null;
 
 const TTY_QUICK_PROTO = ["sys.info", "sys.metrics", "svc.list", "net.wifi.status",
-  "net.ifaces", "pwr.rtc.get", "term.caps",
+  "net.ifaces", "pwr.rtc.get", "term.caps", "term.exec {\"command\":\"uname -a\"}",
   "log.tail {\"unit\":\"bt-gateway.service\",\"lines\":50}"];
 
 /* ---- 字节 <-> base64：JS 与原生之间只过字符串 ---- */
@@ -1630,7 +1868,7 @@ function startDemo() {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
 
     if (m.t === "auth") {
-      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log"] }));
+      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy"] }));
       return;
     }
     const id = m.id;
@@ -1675,7 +1913,20 @@ function startDemo() {
       return ok({ ok: true });
     }
     if (m.name === "pwr.reboot" || m.name === "pwr.poweroff") return ok({ ok: true });
-    if (m.name === "term.caps") return ok({ allow: ["uname -a", "uptime", "id", "free -m"], max_out_kb: 32 });
+    if (m.name === "term.caps") return ok({ interactive_root: true, restricted: false,
+      protocols: ["escaped-v1", "json-mux-v1"], shells: ["/bin/bash", "/bin/sh"],
+      allow: ["*"], max_out_kb: 2,
+      exec: { name: "term.exec", max_command_bytes: 2048, max_output_bytes: 2048, timeout_s_max: 120 } });
+    if (m.name === "term.exec") {
+      const demoOut = {
+        "uname -m": "aarch64\n", "nproc": "4\n",
+        "hostname -I | awk '{print $1}'": "192.168.2.20\n", "who | wc -l": "1\n",
+        "uname -a": "Linux orangepi3-lts 6.18.44-sunxi64 #1 SMP aarch64 GNU/Linux\n"
+      }[m.args.command] || ("演示执行：" + m.args.command + "\n");
+      const bytes = new TextEncoder().encode(demoOut);
+      return ok({ exit_code: 0, output_b64: u8ToB64(bytes), output_bytes: bytes.length,
+        truncated: false, timed_out: false, duration_ms: 12 });
+    }
     if (m.name === "term.shell") {
       ok({ pid: 4242, user: "root", shell: "/bin/bash", cols: m.args.cols, rows: m.args.rows });
       setTimeout(() => {
