@@ -2,18 +2,26 @@ package com.orangepi.btremote
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.security.MessageDigest
 
 /**
  * 唯一的 Activity：一个 WebView 承载仪表盘界面，通过 JS 桥把
@@ -29,6 +37,8 @@ import java.io.ByteArrayOutputStream
  *   sendRaw(b64)         -> 发送原始字节（裸相位，base64 编码）
  *   sendResize(cols,rows)-> 调整远端 PTY 窗口大小（走带内控制帧）
  *   sendClose()          -> 请求远端结束终端会话
+ *   pickUploadFile/readUploadChunk/finishUploadFile -> 从系统文件选择器分块读取
+ *   createDownloadFile/writeDownloadChunk/finishDownloadFile -> 分块保存到系统文件选择器
  *   disconnect()
  *
  * 原生 -> JS 回调：
@@ -48,6 +58,33 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var deliveryEpoch = 0L
 
     private val ui = Handler(Looper.getMainLooper())
+
+    /** Android Storage Access Framework handles; file bytes never need broad storage permission. */
+    private val fileLock = Any()
+    private var uploadDescriptor: ParcelFileDescriptor? = null
+    private var uploadInput: FileInputStream? = null
+    private var uploadOffset = 0L
+    private var uploadSize = 0L
+    private var uploadDigest: MessageDigest? = null
+    private var downloadUri: Uri? = null
+    private var downloadDescriptor: ParcelFileDescriptor? = null
+    private var downloadOutput: FileOutputStream? = null
+    private var downloadOffset = 0L
+    private var downloadDigest: MessageDigest? = null
+
+    private val pickUpload = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) {
+            emit("window.onLocalUploadPicked", JSONObject().put("ok", false)
+                .put("cancelled", true).toString())
+        } else prepareUploadSource(uri)
+    }
+
+    private val createDownload = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri == null) {
+            emit("window.onLocalDownloadPicked", JSONObject().put("ok", false)
+                .put("cancelled", true).toString())
+        } else prepareDownloadTarget(uri)
+    }
 
     /** 终端输出的合帧缓冲：见 flushRaw 注释 */
     private val rawBuf = ByteArrayOutputStream(16 * 1024)
@@ -146,9 +183,107 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun uriMeta(uri: Uri, fallback: String): Pair<String, Long> {
+        var name = fallback
+        var size = -1L
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (nameColumn >= 0 && !cursor.isNull(nameColumn)) name = cursor.getString(nameColumn)
+                    if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) size = cursor.getLong(sizeColumn)
+                }
+            }
+        } catch (_: Exception) { }
+        return Pair(name, size)
+    }
+
+    private fun prepareUploadSource(uri: Uri) {
+        val payload = JSONObject()
+        try {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) { }
+            synchronized(fileLock) {
+                closeUploadSourceLocked()
+                val descriptor = contentResolver.openFileDescriptor(uri, "r")
+                    ?: throw IllegalStateException("无法打开所选文件")
+                val meta = uriMeta(uri, "upload.bin")
+                val size = if (meta.second >= 0) meta.second else descriptor.statSize
+                if (size < 0) {
+                    descriptor.close()
+                    throw IllegalStateException("文件提供方没有返回大小")
+                }
+                uploadDescriptor = descriptor
+                uploadInput = FileInputStream(descriptor.fileDescriptor)
+                uploadOffset = 0
+                uploadSize = size
+                uploadDigest = MessageDigest.getInstance("SHA-256")
+                payload.put("ok", true).put("name", meta.first).put("size", size)
+            }
+        } catch (error: Exception) {
+            synchronized(fileLock) { closeUploadSourceLocked() }
+            payload.put("ok", false).put("error", error.message ?: "无法读取所选文件")
+        }
+        emit("window.onLocalUploadPicked", payload.toString())
+    }
+
+    private fun prepareDownloadTarget(uri: Uri) {
+        val payload = JSONObject()
+        try {
+            synchronized(fileLock) {
+                closeDownloadTargetLocked(true)
+                val descriptor = contentResolver.openFileDescriptor(uri, "rwt")
+                    ?: throw IllegalStateException("无法创建目标文件")
+                downloadUri = uri
+                downloadDescriptor = descriptor
+                downloadOutput = FileOutputStream(descriptor.fileDescriptor)
+                downloadOffset = 0
+                downloadDigest = MessageDigest.getInstance("SHA-256")
+                payload.put("ok", true).put("name", uriMeta(uri, "download.bin").first)
+            }
+        } catch (error: Exception) {
+            synchronized(fileLock) { closeDownloadTargetLocked(true) }
+            payload.put("ok", false).put("error", error.message ?: "无法创建目标文件")
+        }
+        emit("window.onLocalDownloadPicked", payload.toString())
+    }
+
+    private fun closeUploadSourceLocked() {
+        try { uploadInput?.close() } catch (_: Exception) { }
+        try { uploadDescriptor?.close() } catch (_: Exception) { }
+        uploadInput = null
+        uploadDescriptor = null
+        uploadOffset = 0
+        uploadSize = 0
+        uploadDigest = null
+    }
+
+    private fun closeDownloadTargetLocked(deletePartial: Boolean) {
+        try { downloadOutput?.flush() } catch (_: Exception) { }
+        try { downloadDescriptor?.fileDescriptor?.sync() } catch (_: Exception) { }
+        try { downloadOutput?.close() } catch (_: Exception) { }
+        try { downloadDescriptor?.close() } catch (_: Exception) { }
+        val uri = downloadUri
+        downloadOutput = null
+        downloadDescriptor = null
+        downloadUri = null
+        downloadOffset = 0
+        downloadDigest = null
+        if (deletePartial && uri != null) {
+            try { contentResolver.delete(uri, null, null) } catch (_: Exception) { }
+        }
+    }
+
     override fun onDestroy() {
         destroyed = true
         spp.disconnect()
+        synchronized(fileLock) {
+            closeUploadSourceLocked()
+            closeDownloadTargetLocked(true)
+        }
         ui.removeCallbacksAndMessages(null)
         web.removeJavascriptInterface("AndroidBt")
         web.destroy()
@@ -217,9 +352,105 @@ class MainActivity : AppCompatActivity() {
                 spp.disconnect()
             }
         }
+
+        @JavascriptInterface
+        fun pickUploadFile() {
+            ui.post { pickUpload.launch(arrayOf("*/*")) }
+        }
+
+        @JavascriptInterface
+        fun readUploadChunk(offset: Long, maxBytes: Int): String = synchronized(fileLock) {
+            val result = JSONObject()
+            try {
+                val input = uploadInput ?: throw IllegalStateException("没有已选择的上传文件")
+                if (offset != uploadOffset) throw IllegalStateException("本地文件偏移应为 $uploadOffset")
+                val amount = maxBytes.coerceIn(1, FILE_BRIDGE_CHUNK)
+                val buffer = ByteArray(amount)
+                val count = input.read(buffer).coerceAtLeast(0)
+                if (count > 0) uploadDigest?.update(buffer, 0, count)
+                uploadOffset += count
+                result.put("ok", true)
+                    .put("offset", offset)
+                    .put("next_offset", uploadOffset)
+                    .put("data_b64", Base64.encodeToString(buffer.copyOf(count), Base64.NO_WRAP))
+                    .put("eof", uploadOffset >= uploadSize || count == 0)
+            } catch (error: Exception) {
+                result.put("ok", false).put("error", error.message ?: "读取本地文件失败")
+            }
+            result.toString()
+        }
+
+        @JavascriptInterface
+        fun finishUploadFile(): String = synchronized(fileLock) {
+            val result = JSONObject()
+            try {
+                if (uploadInput == null) throw IllegalStateException("没有活动的上传文件")
+                if (uploadOffset != uploadSize) throw IllegalStateException("本地文件尚未读取完成")
+                val digest = uploadDigest?.digest()?.joinToString("") {
+                    "%02x".format(it.toInt() and 0xff)
+                }
+                    ?: throw IllegalStateException("没有校验值")
+                result.put("ok", true).put("size", uploadOffset).put("sha256", digest)
+                closeUploadSourceLocked()
+            } catch (error: Exception) {
+                result.put("ok", false).put("error", error.message ?: "结束上传失败")
+            }
+            result.toString()
+        }
+
+        @JavascriptInterface
+        fun cancelUploadFile() = synchronized(fileLock) { closeUploadSourceLocked() }
+
+        @JavascriptInterface
+        fun createDownloadFile(name: String) {
+            val safeName = name.substringAfterLast('/').substringAfterLast('\\').take(180)
+                .ifBlank { "download.bin" }
+            ui.post { createDownload.launch(safeName) }
+        }
+
+        @JavascriptInterface
+        fun writeDownloadChunk(offset: Long, b64: String): String = synchronized(fileLock) {
+            val result = JSONObject()
+            try {
+                val output = downloadOutput ?: throw IllegalStateException("没有已选择的保存位置")
+                if (offset != downloadOffset) throw IllegalStateException("本地保存偏移应为 $downloadOffset")
+                val bytes = Base64.decode(b64, Base64.NO_WRAP)
+                if (bytes.size > FILE_BRIDGE_CHUNK) throw IllegalArgumentException("下载分块过大")
+                output.write(bytes)
+                downloadDigest?.update(bytes)
+                downloadOffset += bytes.size
+                result.put("ok", true).put("offset", downloadOffset)
+            } catch (error: Exception) {
+                result.put("ok", false).put("error", error.message ?: "写入下载文件失败")
+            }
+            result.toString()
+        }
+
+        @JavascriptInterface
+        fun finishDownloadFile(success: Boolean, expectedSha256: String): String = synchronized(fileLock) {
+            val result = JSONObject()
+            try {
+                if (downloadOutput == null) throw IllegalStateException("没有活动的下载文件")
+                val size = downloadOffset
+                val digest = if (success) downloadDigest?.digest()?.joinToString("") {
+                    "%02x".format(it.toInt() and 0xff)
+                } else null
+                val verified = success && (expectedSha256.isBlank() ||
+                    digest.equals(expectedSha256, ignoreCase = true))
+                closeDownloadTargetLocked(!verified)
+                result.put("ok", verified).put("size", size)
+                if (digest != null) result.put("sha256", digest)
+                if (success && !verified) result.put("error", "SHA256 校验失败，已删除下载文件")
+            } catch (error: Exception) {
+                closeDownloadTargetLocked(true)
+                result.put("ok", false).put("error", error.message ?: "结束下载失败")
+            }
+            result.toString()
+        }
     }
 
     companion object {
         private const val REQ_BT = 1001
+        private const val FILE_BRIDGE_CHUNK = 1536
     }
 }

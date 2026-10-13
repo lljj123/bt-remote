@@ -21,6 +21,7 @@ import concurrent.futures
 import dbus.service
 import fcntl
 import glob
+import hashlib
 import hmac
 import json
 import logging
@@ -31,6 +32,7 @@ import select
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -63,6 +65,10 @@ TERM_INPUT_LIMIT = 65536
 TERM_EXEC_COMMAND_MAX = 2048
 TERM_EXEC_OUTPUT_MAX = 2048
 TERM_EXEC_TIMEOUT_MAX = 120.0
+FILE_CHUNK = 1536
+FILE_PATH_MAX = 1024
+FILE_TRANSFER_MAX = 1024 * 1024 * 1024
+FILE_TEXT_PREVIEW_MAX = 128 * 1024
 SOCK_PATH = "/run/bt-gateway.sock"
 NETPLAN_WIFI = os.environ.get("BTG_NETPLAN_WIFI", "/etc/netplan/30-wifis-dhcp.yaml")
 NETPLAN_GLOB = "/etc/netplan/*.yaml"
@@ -80,7 +86,7 @@ SRV_NAME = "OrangePi 3LTS Gateway"
 VER = 1
 DEV_ID = "orangepi-3lts"
 DEV_NAME = os.environ.get("BTG_DEV_NAME", "Orange Pi Bluetooth Gateway")
-CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy"]
+CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file"]
 
 MIHOMO_API = os.environ.get("BTG_MIHOMO_API", "").rstrip("/")
 MIHOMO_SECRET_FILE = os.environ.get("BTG_MIHOMO_SECRET_FILE", "")
@@ -1310,6 +1316,355 @@ def cmd_log_follow(sess, a):
     return {"ok": True, "unit": unit, "on": on}
 
 
+# ------------------------------------------------------------------ file.*
+def _file_path(value, field="path"):
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise CmdError("E_FILE_ARGS", "%s must be a non-empty path" % field)
+    if len(value.encode("utf-8")) > FILE_PATH_MAX:
+        raise CmdError("E_FILE_ARGS", "%s exceeds %d bytes" % (field, FILE_PATH_MAX))
+    if not os.path.isabs(value):
+        raise CmdError("E_FILE_ARGS", "%s must be absolute" % field)
+    return os.path.normpath(value)
+
+
+def _file_fail(error, action):
+    if isinstance(error, FileNotFoundError):
+        raise CmdError("E_FILE_NOTFOUND", "%s: path not found" % action)
+    if isinstance(error, PermissionError):
+        raise CmdError("E_FILE_PERM", "%s: permission denied" % action)
+    if isinstance(error, (NotADirectoryError, IsADirectoryError)):
+        raise CmdError("E_FILE_TYPE", "%s: wrong file type" % action)
+    raise CmdError("E_FILE_IO", "%s: %s" % (action, str(error)[:160]))
+
+
+def _file_kind(mode):
+    if stat.S_ISDIR(mode):
+        return "dir"
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISLNK(mode):
+        return "link"
+    return "other"
+
+
+def _file_row(name, path, info):
+    row = {"name": name, "type": _file_kind(info.st_mode),
+           "size": info.st_size, "mtime": int(info.st_mtime),
+           "mode": "%04o" % stat.S_IMODE(info.st_mode),
+           "hidden": name.startswith(".")}
+    if row["type"] == "link":
+        try:
+            row["target"] = os.readlink(path)[:512]
+        except OSError:
+            row["target"] = ""
+    return row
+
+
+def cmd_file_caps(_s, _a):
+    return {"root": "/", "chunk_bytes": FILE_CHUNK,
+            "max_transfer_bytes": FILE_TRANSFER_MAX,
+            "text_preview_bytes": FILE_TEXT_PREVIEW_MAX,
+            "atomic_upload": True, "delete_empty_dirs_only": True}
+
+
+def cmd_file_list(_s, a):
+    a = a or {}
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path", "/root"))
+    offset, limit = a.get("offset", 0), a.get("limit", 24)
+    if type(offset) is not int or offset < 0:
+        raise CmdError("E_FILE_ARGS", "offset must be a non-negative integer")
+    if type(limit) is not int or not (1 <= limit <= 48):
+        raise CmdError("E_FILE_ARGS", "limit must be 1..48")
+    try:
+        rows = []
+        with os.scandir(path) as iterator:
+            for entry in iterator:
+                info = entry.stat(follow_symlinks=False)
+                rows.append(_file_row(entry.name, entry.path, info))
+    except OSError as error:
+        _file_fail(error, "list")
+    rows.sort(key=lambda row: (row["type"] != "dir", row["name"].casefold()))
+    entries = []
+    for row in rows[offset:offset + limit]:
+        candidate = entries + [row]
+        preview = {"path": path, "parent": os.path.dirname(path.rstrip("/")) or "/",
+                   "entries": candidate, "next_offset": offset + len(candidate),
+                   "eof": False}
+        if len(jdump(preview).encode("utf-8")) > 3000 and entries:
+            break
+        entries.append(row)
+    next_offset = offset + len(entries)
+    return {"path": path, "parent": os.path.dirname(path.rstrip("/")) or "/",
+            "entries": entries, "next_offset": next_offset,
+            "eof": next_offset >= len(rows)}
+
+
+def cmd_file_stat(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path"))
+    try:
+        return dict(_file_row(os.path.basename(path) or "/", path, os.lstat(path)),
+                    path=path)
+    except OSError as error:
+        _file_fail(error, "stat")
+
+
+def _open_regular(path):
+    try:
+        handle = open(path, "rb", buffering=0)
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            handle.close()
+            raise CmdError("E_FILE_TYPE", "path is not a regular file")
+        return handle, info
+    except CmdError:
+        raise
+    except OSError as error:
+        _file_fail(error, "open")
+
+
+def cmd_file_read(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path"))
+    offset, length = a.get("offset", 0), a.get("length", FILE_CHUNK)
+    if type(offset) is not int or offset < 0:
+        raise CmdError("E_FILE_ARGS", "offset must be a non-negative integer")
+    if type(length) is not int or not (1 <= length <= FILE_CHUNK):
+        raise CmdError("E_FILE_ARGS", "length must be 1..%d" % FILE_CHUNK)
+    handle, info = _open_regular(path)
+    try:
+        handle.seek(offset)
+        data = handle.read(length)
+    except OSError as error:
+        _file_fail(error, "read")
+    finally:
+        handle.close()
+    next_offset = offset + len(data)
+    return {"path": path, "offset": offset, "next_offset": next_offset,
+            "size": info.st_size, "data_b64": base64.b64encode(data).decode("ascii"),
+            "eof": next_offset >= info.st_size or len(data) < length}
+
+
+def cmd_file_hash(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path"))
+    handle, info = _open_regular(path)
+    digest, total = hashlib.sha256(), 0
+    try:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+    except OSError as error:
+        _file_fail(error, "hash")
+    finally:
+        handle.close()
+    return {"path": path, "size": total, "sha256": digest.hexdigest(),
+            "stable_size": total == info.st_size}
+
+
+def cmd_file_mkdir(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path"))
+    if path == "/":
+        raise CmdError("E_FILE_ARGS", "cannot create filesystem root")
+    try:
+        os.mkdir(path, 0o755)
+    except FileExistsError:
+        raise CmdError("E_FILE_EXISTS", "path already exists")
+    except OSError as error:
+        _file_fail(error, "mkdir")
+    return {"path": path, "created": True}
+
+
+def cmd_file_rename(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    source = _file_path(a.get("path"))
+    target = _file_path(a.get("target"), "target")
+    if source == "/" or target == "/":
+        raise CmdError("E_FILE_ARGS", "cannot rename filesystem root")
+    if os.path.lexists(target):
+        raise CmdError("E_FILE_EXISTS", "target already exists")
+    try:
+        os.rename(source, target)
+    except OSError as error:
+        _file_fail(error, "rename")
+    return {"path": source, "target": target, "renamed": True}
+
+
+def cmd_file_remove(_s, a):
+    if not isinstance(a, dict) or a.get("confirm") != "DELETE":
+        raise CmdError("E_CONFIRM", 'confirm must be "DELETE"')
+    path = _file_path(a.get("path"))
+    if path == "/":
+        raise CmdError("E_FILE_ARGS", "cannot remove filesystem root")
+    try:
+        info = os.lstat(path)
+        kind = _file_kind(info.st_mode)
+        if kind == "dir":
+            os.rmdir(path)
+        elif kind in ("file", "link"):
+            os.unlink(path)
+        else:
+            raise CmdError("E_FILE_TYPE", "special files cannot be removed here")
+    except CmdError:
+        raise
+    except OSError as error:
+        _file_fail(error, "remove")
+    return {"path": path, "removed": True}
+
+
+def _file_uploads(sess):
+    if not hasattr(sess, "file_uploads"):
+        sess.file_uploads = {}
+    return sess.file_uploads
+
+
+def _file_upload_drop(sess, upload_id, delete=True):
+    record = _file_uploads(sess).pop(upload_id, None)
+    if not record:
+        return False
+    fd = record.get("fd")
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        record["fd"] = None
+    if delete:
+        try:
+            os.unlink(record["temporary"])
+        except OSError:
+            pass
+    return True
+
+
+def cmd_file_upload_begin(sess, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path"))
+    size, overwrite = a.get("size"), a.get("overwrite", False)
+    if type(size) is not int or not (0 <= size <= FILE_TRANSFER_MAX):
+        raise CmdError("E_FILE_ARGS", "size must be 0..%d" % FILE_TRANSFER_MAX)
+    if type(overwrite) is not bool:
+        raise CmdError("E_FILE_ARGS", "overwrite must be boolean")
+    if path == "/":
+        raise CmdError("E_FILE_ARGS", "cannot upload to filesystem root")
+    uploads = _file_uploads(sess)
+    if len(uploads) >= 2:
+        raise CmdError("E_BUSY", "too many active uploads")
+    parent = os.path.dirname(path)
+    if not os.path.isdir(parent):
+        raise CmdError("E_FILE_NOTFOUND", "destination directory does not exist")
+    mode = 0o644
+    if os.path.lexists(path):
+        if not overwrite:
+            raise CmdError("E_FILE_EXISTS", "destination already exists")
+        try:
+            info = os.lstat(path)
+        except OSError as error:
+            _file_fail(error, "upload")
+        if not stat.S_ISREG(info.st_mode):
+            raise CmdError("E_FILE_TYPE", "only regular files can be overwritten")
+        mode = stat.S_IMODE(info.st_mode)
+    upload_id = uuid.uuid4().hex
+    temporary = os.path.join(parent, ".bt-upload-%s.part" % upload_id)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(temporary, flags, 0o600)
+    except OSError as error:
+        _file_fail(error, "upload")
+    uploads[upload_id] = {"fd": fd, "temporary": temporary, "target": path,
+                          "size": size, "received": 0, "sha256": hashlib.sha256(),
+                          "overwrite": overwrite, "mode": mode}
+    return {"upload_id": upload_id, "path": path, "size": size,
+            "chunk_bytes": FILE_CHUNK, "offset": 0}
+
+
+def cmd_file_upload_chunk(sess, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    upload_id, offset, encoded = a.get("upload_id"), a.get("offset"), a.get("data_b64")
+    record = _file_uploads(sess).get(upload_id) if isinstance(upload_id, str) else None
+    if not record:
+        raise CmdError("E_FILE_STATE", "upload session not found")
+    if type(offset) is not int or offset != record["received"]:
+        raise CmdError("E_FILE_OFFSET", "expected offset %d" % record["received"])
+    if not isinstance(encoded, str) or len(encoded) > 4 * ((FILE_CHUNK + 2) // 3):
+        raise CmdError("E_FILE_ARGS", "invalid upload chunk")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        raise CmdError("E_FILE_ARGS", "invalid base64")
+    if not data or len(data) > FILE_CHUNK:
+        raise CmdError("E_FILE_ARGS", "upload chunk must be 1..%d bytes" % FILE_CHUNK)
+    if offset + len(data) > record["size"]:
+        raise CmdError("E_FILE_SIZE", "upload exceeds declared size")
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(record["fd"], view)
+            view = view[written:]
+    except OSError as error:
+        _file_upload_drop(sess, upload_id)
+        _file_fail(error, "upload write")
+    record["sha256"].update(data)
+    record["received"] += len(data)
+    return {"upload_id": upload_id, "accepted": len(data),
+            "offset": record["received"], "size": record["size"]}
+
+
+def cmd_file_upload_commit(sess, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    upload_id, expected = a.get("upload_id"), a.get("sha256")
+    record = _file_uploads(sess).get(upload_id) if isinstance(upload_id, str) else None
+    if not record:
+        raise CmdError("E_FILE_STATE", "upload session not found")
+    if expected is not None and (not isinstance(expected, str)
+                                 or not re.fullmatch(r"[0-9a-fA-F]{64}", expected)):
+        raise CmdError("E_FILE_ARGS", "sha256 must be 64 hexadecimal characters")
+    if record["received"] != record["size"]:
+        raise CmdError("E_FILE_SIZE", "upload is incomplete at offset %d" % record["received"])
+    digest = record["sha256"].hexdigest()
+    if expected is not None and not hmac.compare_digest(digest, expected.lower()):
+        _file_upload_drop(sess, upload_id)
+        raise CmdError("E_FILE_HASH", "upload SHA256 mismatch; temporary file removed")
+    try:
+        os.fsync(record["fd"])
+        os.close(record["fd"])
+        record["fd"] = None
+        if not record["overwrite"] and os.path.lexists(record["target"]):
+            raise CmdError("E_FILE_EXISTS", "destination appeared during upload")
+        os.chmod(record["temporary"], record["mode"])
+        os.replace(record["temporary"], record["target"])
+    except CmdError:
+        _file_upload_drop(sess, upload_id)
+        raise
+    except OSError as error:
+        _file_upload_drop(sess, upload_id)
+        _file_fail(error, "upload commit")
+    _file_uploads(sess).pop(upload_id, None)
+    return {"path": record["target"], "size": record["size"],
+            "sha256": digest, "committed": True}
+
+
+def cmd_file_upload_abort(sess, a):
+    if not isinstance(a, dict) or not isinstance(a.get("upload_id"), str):
+        raise CmdError("E_FILE_ARGS", "upload_id required")
+    return {"upload_id": a["upload_id"],
+            "aborted": _file_upload_drop(sess, a["upload_id"])}
+
+
 # ------------------------------------------------------------------ proxy.*
 def cmd_proxy_status(_s, a):
     a = a or {}
@@ -1662,6 +2017,18 @@ COMMANDS = {
     "pwr.rtc.set": cmd_pwr_rtc_set,
     "log.tail": cmd_log_tail,
     "log.follow": cmd_log_follow,
+    "file.caps": cmd_file_caps,
+    "file.list": cmd_file_list,
+    "file.stat": cmd_file_stat,
+    "file.read": cmd_file_read,
+    "file.hash": cmd_file_hash,
+    "file.mkdir": cmd_file_mkdir,
+    "file.rename": cmd_file_rename,
+    "file.remove": cmd_file_remove,
+    "file.upload.begin": cmd_file_upload_begin,
+    "file.upload.chunk": cmd_file_upload_chunk,
+    "file.upload.commit": cmd_file_upload_commit,
+    "file.upload.abort": cmd_file_upload_abort,
     "proxy.status": cmd_proxy_status,
     "proxy.groups": cmd_proxy_groups,
     "proxy.nodes": cmd_proxy_nodes,
@@ -1711,6 +2078,7 @@ class Session(threading.Thread):
         self.term_input = bytearray()
         self.term_size = None
         self.job_lock = threading.Lock()
+        self.file_uploads = {}
 
     # ---------------- 发送
     def send(self, obj):
@@ -2229,6 +2597,8 @@ class Session(threading.Thread):
         self.closed = True
         self.term_stop.set()
         self.log_follow_stop()
+        for upload_id in list(self.file_uploads):
+            _file_upload_drop(self, upload_id)
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:

@@ -71,7 +71,13 @@ def main():
         peer = Peer(sock)
         assert peer.line().get("term_protocol") == "escaped-v1"
         peer.send({"t": "auth", "token": token})
-        assert peer.line().get("ok") is True
+        auth = peer.line()
+        assert auth.get("ok") is True
+        assert "file" in auth.get("caps", []), auth
+        peer.send({"t": "cmd", "id": 99, "name": "file.caps", "args": {}})
+        file_caps = peer.response(99)["data"]
+        assert file_caps["chunk_bytes"] == 1536, file_caps
+        print("PASS: file manager capability")
         peer.send({"t": "cmd", "id": 100, "name": "term.exec",
                    "args": {"command": "printf bt-exec-ok"}})
         executed = peer.response(100)["data"]

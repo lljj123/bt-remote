@@ -46,7 +46,25 @@ def healthcheck():
                 if msg.get("t") == "auth":
                     if msg.get("ok") is not True:
                         raise RuntimeError("Local gateway authentication failed")
-                    return
+                    caps = msg.get("caps") or []
+                    required = {"term", "proxy", "file"}
+                    missing = sorted(required.difference(caps))
+                    if missing:
+                        raise RuntimeError("Gateway is outdated; missing capabilities: " + ",".join(missing))
+                    for request_id, name in ((901, "term.caps"), (902, "file.caps")):
+                        sock.sendall((json.dumps({"t": "cmd", "id": request_id,
+                                                  "name": name, "args": {}}) + "\n").encode())
+                        command_deadline = time.monotonic() + 5
+                        while True:
+                            if time.monotonic() >= command_deadline:
+                                raise RuntimeError("Gateway command timed out: " + name)
+                            response = read()
+                            if response.get("t") != "res" or response.get("id") != request_id:
+                                continue
+                            if response.get("ok") is not True:
+                                raise RuntimeError("Gateway command unavailable: " + name)
+                            break
+                    return caps
             raise RuntimeError("Authentication timeout")
 
 
@@ -88,8 +106,8 @@ def main(argv=None):
             failures.append("WiFi rollback pending")
         require_root()
         try:
-            healthcheck()
-            print("Local authenticated gateway probe: OK (token not displayed)")
+            caps = healthcheck()
+            print("Local authenticated gateway probe: OK; caps=" + ",".join(caps))
         except (OSError, RuntimeError, ValueError) as error:
             failures.append(str(error))
         for failure in failures: print("FAIL:", failure)

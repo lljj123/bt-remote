@@ -1,10 +1,13 @@
 import base64
+import hashlib
 import importlib.util
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
 import threading
+import tempfile
 import types
 import unittest
 from urllib.parse import unquote, urlparse
@@ -171,6 +174,64 @@ class GatewayCommandTests(unittest.TestCase):
             with self.assertRaises(GATEWAY.CmdError) as caught:
                 GATEWAY.cmd_term_exec(None, {"command": command})
             self.assertEqual(caught.exception.code, "E_ARGS")
+
+    def test_file_browse_read_hash_and_mutations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "hello.txt"
+            first.write_bytes(b"hello file manager")
+            (Path(directory) / "folder").mkdir()
+
+            listed = GATEWAY.cmd_file_list(None, {"path": directory})
+            self.assertEqual([row["name"] for row in listed["entries"]],
+                             ["folder", "hello.txt"])
+            self.assertTrue(listed["eof"])
+
+            read = GATEWAY.cmd_file_read(None, {
+                "path": str(first), "offset": 6, "length": 4})
+            self.assertEqual(base64.b64decode(read["data_b64"]), b"file")
+            digest = GATEWAY.cmd_file_hash(None, {"path": str(first)})
+            self.assertEqual(digest["sha256"], hashlib.sha256(first.read_bytes()).hexdigest())
+
+            created = Path(directory) / "created"
+            renamed = Path(directory) / "renamed"
+            GATEWAY.cmd_file_mkdir(None, {"path": str(created)})
+            GATEWAY.cmd_file_rename(None, {"path": str(created), "target": str(renamed)})
+            GATEWAY.cmd_file_remove(None, {"path": str(renamed), "confirm": "DELETE"})
+            self.assertFalse(renamed.exists())
+
+    def test_file_upload_is_atomic_and_hash_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = types.SimpleNamespace(file_uploads={})
+            target = Path(directory) / "upload.bin"
+            payload = os.urandom(GATEWAY.FILE_CHUNK + 17)
+            begun = GATEWAY.cmd_file_upload_begin(session, {
+                "path": str(target), "size": len(payload), "overwrite": False})
+            upload_id = begun["upload_id"]
+            offset = 0
+            for start in range(0, len(payload), GATEWAY.FILE_CHUNK):
+                chunk = payload[start:start + GATEWAY.FILE_CHUNK]
+                result = GATEWAY.cmd_file_upload_chunk(session, {
+                    "upload_id": upload_id, "offset": offset,
+                    "data_b64": base64.b64encode(chunk).decode()})
+                offset = result["offset"]
+            self.assertFalse(target.exists())
+            committed = GATEWAY.cmd_file_upload_commit(session, {
+                "upload_id": upload_id, "sha256": hashlib.sha256(payload).hexdigest()})
+            self.assertTrue(committed["committed"])
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertFalse(session.file_uploads)
+
+            bad = GATEWAY.cmd_file_upload_begin(session, {
+                "path": str(target), "size": 3, "overwrite": True})
+            GATEWAY.cmd_file_upload_chunk(session, {
+                "upload_id": bad["upload_id"], "offset": 0,
+                "data_b64": base64.b64encode(b"bad").decode()})
+            with self.assertRaises(GATEWAY.CmdError) as caught:
+                GATEWAY.cmd_file_upload_commit(session, {
+                    "upload_id": bad["upload_id"], "sha256": "0" * 64})
+            self.assertEqual(caught.exception.code, "E_FILE_HASH")
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertFalse(session.file_uploads)
 
 
 if __name__ == "__main__":

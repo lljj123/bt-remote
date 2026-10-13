@@ -1,6 +1,6 @@
 # bt-remote · 香橙派蓝牙管理网关
 
-Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、Netplan WiFi 配置、日志、RTC 设置、mihomo 代理控制、交互 root 终端和单次 `term.exec` 命令。
+Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、Netplan WiFi 配置、RTC 设置、mihomo 代理控制、App 内文件管理、交互 root 终端和单次 `term.exec` 命令。
 
 原创代码使用 **Apache-2.0**，第三方代码保留原许可证，详见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
@@ -83,6 +83,8 @@ BTG_MIHOMO_GROUP=PROXY
 
 App 概览里的“自定义系统信息”由 `dashboard.html` 的 `CUSTOM_INFO_COMMANDS` 数组定义。网关提供通用 `term.exec`，因此后续增删只读系统查询只需修改并重新构建 APK，不必再为每个字段增加网关命令。`term.exec` 与交互终端一样拥有 root 权限，具体协议见 [网关协议 v2](docs/gateway-protocol-v2.md)。
 
+App 的“文件”页可浏览板端目录、上传、下载、新建目录、重命名、删除空目录或文件，以及预览和编辑小型 UTF-8 文本。传输按 1536 字节分块；上传先写同目录临时文件，SHA256 校验成功后原子替换，断线时清理临时文件。Android 通过系统文件选择器访问手机文件，不申请整个存储空间权限。日志协议和板端 `bt-remote logs` 仍保留，但 App 不显示独立日志选项卡。
+
 WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。默认配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
 
 当前适配单个 `hci0` 控制器，蓝牙驱动/固件需由系统提供。内存上限默认 256 MiB，包含终端启动的子进程；可通过 `systemctl edit bt-gateway` 调整。
@@ -108,6 +110,6 @@ python3 tools/install_gateway.py --destdir .stage
 
 ## 安全与发布
 
-令牌可开启 root 终端，必须按管理员密码保管。不要公开真实令牌、Netplan 配置、WiFi 密码和签名密钥；详见 [SECURITY.md](SECURITY.md)。源代码目录可以包含被忽略的本地构建产物，但发布前必须检查 Git 暂存区和历史。当前工作区尚未建立 Git 仓库，也未发布到任何托管平台。
+令牌可开启 root 终端和 root 文件管理，必须按管理员密码保管。不要公开真实令牌、Netplan 配置、WiFi 密码和签名密钥；详见 [SECURITY.md](SECURITY.md)。源代码目录可以包含被忽略的本地构建产物，但发布前必须检查 Git 暂存区和历史。
 
 守护配置依据 [systemd service 文档](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml)，配对窗口使用 [BlueZ Adapter 属性](https://github.com/bluez/bluez/blob/master/doc/org.bluez.Adapter.rst)。

@@ -3,10 +3,10 @@
 本文只描述 v1 基础协议之上的新增命令。传输仍为 UTF-8 NDJSON，认证、
 4096 字节帧上限、响应 `id` 匹配和 `escaped-v1` 终端相位均保持不变。
 
-认证成功后的 `caps` 新增 `proxy`：
+认证成功后的 `caps` 新增 `proxy` 和 `file`：
 
 ```json
-{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy"]}
+{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy","file"]}
 ```
 
 ## 单次通用命令
@@ -75,3 +75,30 @@
 
 代理修改和延迟测试使用互斥锁；冲突返回 `E_BUSY`。controller 相关错误码为
 `E_PROXY_AUTH/CONFIG/CONNECT/DATA/HTTP/NOTFOUND/SIZE/TIMEOUT`。
+
+## App 内文件管理
+
+`file.caps` 返回文件能力、1536 字节分块上限、最大传输大小和文本预览上限。
+所有路径必须是绝对路径；该接口与 root 终端权限相同，不限制在某个目录内。
+
+目录和普通操作：
+
+- `file.list {"path":"/root","offset":0,"limit":24}`：分页列目录。
+- `file.stat {"path":"/root/a.txt"}`：读取类型、大小、时间和模式。
+- `file.read {"path":"/root/a.txt","offset":0,"length":1536}`：Base64 分块读取。
+- `file.hash {"path":"/root/a.txt"}`：计算 SHA256。
+- `file.mkdir {"path":"/root/new-dir"}`。
+- `file.rename {"path":"/root/a","target":"/root/b"}`：不覆盖已有目标。
+- `file.remove {"path":"/root/a","confirm":"DELETE"}`：仅文件、符号链接或空目录。
+
+上传为同目录临时文件加原子提交：
+
+```json
+{"name":"file.upload.begin","args":{"path":"/root/a.bin","size":2048,"overwrite":false}}
+{"name":"file.upload.chunk","args":{"upload_id":"...","offset":0,"data_b64":"..."}}
+{"name":"file.upload.commit","args":{"upload_id":"...","sha256":"..."}}
+```
+
+偏移必须严格连续，单块不超过 1536 字节。`commit` 只有在声明大小完整且可选
+SHA256 一致时才用 `os.replace` 发布目标文件。断线或 `file.upload.abort` 会删除临时文件。
+文件错误码为 `E_FILE_ARGS/EXISTS/HASH/IO/NOTFOUND/OFFSET/PERM/SIZE/STATE/TYPE`。

@@ -28,6 +28,8 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 概览页的附加系统信息由 `app/src/main/assets/dashboard.html` 中的 `CUSTOM_INFO_COMMANDS` 数组驱动，调用网关 `term.exec`。以后调整显示项只需修改该数组并重新构建 APK。服务页的代理卡片调用 `proxy.status/switch/mode/onoff`，需要板端配置 mihomo external-controller。
 
+“文件”页替代旧的“日志”页签。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。上传及下载都校验 SHA256；小型 UTF-8 文本可以直接预览和原子保存。
+
 ## 许可证
 
 项目原创代码为 Apache-2.0；`app/src/main/assets/vendor/` 内 xterm.js 和 fit addon 为 MIT，完整声明随资源打包。
