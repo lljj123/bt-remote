@@ -2,6 +2,8 @@ package com.orangepi.btremote
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -39,6 +41,7 @@ import java.security.MessageDigest
  *   sendClose()          -> 请求远端结束终端会话
  *   pickUploadFile/readUploadChunk/finishUploadFile -> 从系统文件选择器分块读取
  *   createDownloadFile/writeDownloadChunk/finishDownloadFile -> 分块保存到系统文件选择器
+ *   getClipboardText/setClipboardText -> 终端复制粘贴使用原生系统剪贴板
  *   disconnect()
  *
  * 原生 -> JS 回调：
@@ -149,8 +152,8 @@ class MainActivity : AppCompatActivity() {
      * 终端输出合帧。
      *
      * 一次 `ls -l` 会产生几十上百个 socket 块，如果每块都调一次 evaluateJavascript，
-     * WebView 会被打爆（每次调用都要过一次 JS 引擎边界）。这里在 16ms（约一帧）窗口内
-     * 把数据攒起来一起送，既降低调用次数又保证显示流畅（60fps 上限）。
+     * WebView 会被打爆（每次调用都要过一次 JS 引擎边界）。这里在 24ms 窗口内
+     * 把数据攒起来一起送；JS 侧再按 xterm 写入回调逐帧消费，给触摸滚动留出主线程时间。
      */
     private fun queueRaw(bytes: ByteArray) {
         synchronized(rawBuf) {
@@ -159,7 +162,7 @@ class MainActivity : AppCompatActivity() {
             if (rawBuf.size() >= 64 * 1024) flushRaw()
             if (rawScheduled) return
             rawScheduled = true
-            ui.postDelayed({ flushRaw() }, 16)
+            ui.postDelayed({ flushRaw() }, 24)
         }
     }
 
@@ -354,6 +357,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getClipboardText(): String = try {
+            val clipboard = getSystemService(ClipboardManager::class.java)
+            val clip = clipboard.primaryClip
+            if (clip == null || clip.itemCount == 0) ""
+            else clip.getItemAt(0).coerceToText(this@MainActivity).toString()
+                .take(MAX_CLIPBOARD_CHARS)
+        } catch (_: Exception) {
+            ""
+        }
+
+        @JavascriptInterface
+        fun setClipboardText(text: String): Boolean = try {
+            val clipboard = getSystemService(ClipboardManager::class.java)
+            clipboard.setPrimaryClip(ClipData.newPlainText("板子遥控终端", text.take(MAX_CLIPBOARD_CHARS)))
+            true
+        } catch (_: Exception) {
+            false
+        }
+
+        @JavascriptInterface
         fun pickUploadFile() {
             ui.post { pickUpload.launch(arrayOf("*/*")) }
         }
@@ -452,5 +475,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQ_BT = 1001
         private const val FILE_BRIDGE_CHUNK = 1536
+        private const val MAX_CLIPBOARD_CHARS = 256 * 1024
     }
 }

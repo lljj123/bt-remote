@@ -47,13 +47,16 @@ def healthcheck():
                     if msg.get("ok") is not True:
                         raise RuntimeError("Local gateway authentication failed")
                     caps = msg.get("caps") or []
-                    required = {"term", "proxy", "file"}
+                    required = {"term", "proxy", "file", "device", "multiwifi"}
                     missing = sorted(required.difference(caps))
                     if missing:
                         raise RuntimeError("Gateway is outdated; missing capabilities: " + ",".join(missing))
-                    for request_id, name in ((901, "term.caps"), (902, "file.caps")):
+                    for request_id, name, args in (
+                            (901, "term.caps", {}),
+                            (902, "file.caps", {}),
+                            (903, "device.usb.list", {"offset": 0, "limit": 1})):
                         sock.sendall((json.dumps({"t": "cmd", "id": request_id,
-                                                  "name": name, "args": {}}) + "\n").encode())
+                                                  "name": name, "args": args}) + "\n").encode())
                         command_deadline = time.monotonic() + 5
                         while True:
                             if time.monotonic() >= command_deadline:

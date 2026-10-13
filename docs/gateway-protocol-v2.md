@@ -3,10 +3,10 @@
 本文只描述 v1 基础协议之上的新增命令。传输仍为 UTF-8 NDJSON，认证、
 4096 字节帧上限、响应 `id` 匹配和 `escaped-v1` 终端相位均保持不变。
 
-认证成功后的 `caps` 新增 `proxy` 和 `file`：
+认证成功后的 `caps` 包括 `proxy`、`file` 和 `device`：
 
 ```json
-{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy","file"]}
+{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy","file","device","multiwifi"]}
 ```
 
 ## 单次通用命令
@@ -75,6 +75,26 @@
 
 代理修改和延迟测试使用互斥锁；冲突返回 `E_BUSY`。controller 相关错误码为
 `E_PROXY_AUTH/CONFIG/CONNECT/DATA/HTTP/NOTFOUND/SIZE/TIMEOUT`。
+
+## 多无线网卡
+
+`net.ifaces {}` 返回当前所有非 loopback 网络接口。每项包含 `name/type/bus/external/driver/state/ipv4/mac`，无线接口还包含 `ssid/bssid/signal_dbm/freq`。USB 无线网卡通常为 `type=wifi,bus=usb,external=true`。
+
+以下命令都接受 `iface`；省略时为兼容旧客户端而使用 `BTG_WLAN`（默认 `wlan0`）：
+
+```json
+{"name":"net.wifi.status","args":{"iface":"wlx001122334455"}}
+{"name":"net.wifi.scan","args":{"iface":"wlx001122334455","rescan":true}}
+{"name":"net.wifi.saved","args":{"iface":"wlx001122334455"}}
+{"name":"net.wifi.connect","args":{"iface":"wlx001122334455","ssid":"Example","psk":"password","timeout_s":30}}
+{"name":"net.wifi.forget","args":{"iface":"wlx001122334455","ssid":"Example"}}
+```
+
+网关验证接口确实存在且为无线设备。连接配置写入所选接口自己的 Netplan 条目，并保留其它无线接口配置；连接失败仍使用独立 systemd 看门狗回滚。
+
+## USB 外接设备
+
+`device.usb.list {"offset":0,"limit":8}` 从 sysfs 分页枚举当前外接 USB 设备（不包含主控根 Hub）。响应包含总数、下一偏移以及 `devices`；每台设备包括 VID:PID、厂商、产品、可选序列号、USB 速率、设备类别、已绑定驱动和关联的网卡/磁盘/串口名。该命令只读，不执行 USB 授权切换、断电或存储卸载。
 
 ## App 内文件管理
 

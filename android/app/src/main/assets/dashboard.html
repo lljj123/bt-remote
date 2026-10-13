@@ -144,8 +144,17 @@
   /* 终端全屏 */
   #tab-tty.fs{position:fixed;inset:0;z-index:80;background:var(--bg);overflow:hidden;padding:10px 12px}
   #tab-tty.fs .card{max-width:none;height:100%;display:flex;flex-direction:column;margin-bottom:0}
-  #tab-tty.fs #termWrap{flex:1;min-height:0}
+  #termWrap{height:46vh;min-height:240px;max-height:520px;overflow:hidden;
+    overscroll-behavior:contain;background:#070a10;border-radius:8px}
+  #termWrap .xterm-viewport{overscroll-behavior-y:contain;touch-action:pan-y;
+    -webkit-overflow-scrolling:touch}
+  #termWrap.selecting .xterm-viewport,#termWrap.selecting .xterm-screen{touch-action:none}
+  #termWrap.selecting{box-shadow:0 0 0 2px var(--accent)}
+  #tab-tty.fs #termWrap{flex:1;height:auto;max-height:none;min-height:0}
   #tab-tty.fs #ttyShellWrap{flex:1;min-height:0;display:flex;flex-direction:column}
+  .term-tools{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .term-tools button{flex:1;min-width:64px;padding:6px 8px;font-size:12px}
+  .term-tools button.active{background:var(--accent);border-color:var(--accent);color:#fff}
 
   /* 折叠卡片 */
   .fold-head{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
@@ -217,6 +226,7 @@
     <button data-tab="ov" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</button>
     <button data-tab="svc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>服务</button>
     <button data-tab="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络</button>
+    <button data-tab="dev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 12h8M9 8v8M15 8v8"/><path d="M7 4h10v4H7zM6 16h12v4H6z"/></svg>外设</button>
     <button data-tab="pwr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>电源</button>
     <button data-tab="file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h7l2 2h9v11H3z"/><path d="M3 6V4h6l2 2"/></svg>文件</button>
     <button data-tab="tty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>终端</button>
@@ -324,7 +334,15 @@
   <!-- 网络 -->
   <section id="tab-net" class="hide">
     <div class="card">
-      <h2>当前连接</h2>
+      <h2>网络接口
+        <button class="ghost" id="btnNetReload" style="margin-left:auto;padding:4px 9px">刷新</button>
+      </h2>
+      <div id="netIfaceList"><div class="dim" style="font-size:12px">连接后读取网卡。</div></div>
+    </div>
+    <div class="card">
+      <h2>无线连接</h2>
+      <div class="field"><label>使用无线网卡</label><select id="wifiIface"></select></div>
+      <div class="kv"><b>接口</b><span id="wIface">--</span></div>
       <div class="kv"><b>SSID</b><span id="wSsid">--</span></div>
       <div class="kv"><b>信号</b><span id="wSig">--</span></div>
       <div class="kv"><b>地址</b><span id="wIp">--</span></div>
@@ -339,6 +357,19 @@
       <h2>已保存的网络</h2>
       <button class="ghost" id="btnSavedReload" style="margin-bottom:4px">刷新</button>
       <div id="savedList"></div>
+    </div>
+  </section>
+
+  <!-- USB 外接设备 -->
+  <section id="tab-dev" class="hide">
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 12h8M9 8v8M15 8v8"/><path d="M7 4h10v4H7zM6 16h12v4H6z"/></svg>USB 外接设备
+        <button class="ghost" id="btnUsbReload" style="margin-left:auto;padding:4px 9px">刷新</button>
+      </h2>
+      <div class="note">显示当前插入板子的 USB 设备、驱动和生成的网卡/磁盘/串口。无线网卡若驱动正常，也会出现在“网络”页。</div>
+      <div id="usbState" class="dim" style="font-size:12px;margin-bottom:6px">连接后读取。</div>
+      <div id="usbList"></div>
+      <button class="ghost hide" id="btnUsbMore" style="width:100%;margin-top:10px">加载更多</button>
     </div>
   </section>
 
@@ -432,6 +463,15 @@
         <div class="note warn hide" id="shNote"></div>
         <div id="termWrap"></div>
         <div class="kb" id="kbBar"></div>
+        <div class="term-tools">
+          <button class="ghost" id="btnTermSelect">选择</button>
+          <button class="ghost" id="btnTermCopy" disabled>复制</button>
+          <button class="ghost" id="btnTermAll">全选</button>
+          <button class="ghost" id="btnTermPaste">粘贴</button>
+        </div>
+        <div class="dim hide" id="termSelectHint" style="font-size:11px;margin-top:5px">
+          选择模式：在终端文字上拖动；完成后点“复制”。再次点“选择”可退出。
+        </div>
         <div class="row2" style="margin-top:8px">
           <button class="pri" id="btnShStart" style="flex:1">启动 Shell 会话</button>
           <button class="ghost" id="btnShClose" style="flex:1">结束会话</button>
@@ -440,7 +480,8 @@
         </div>
         <div class="dim" style="font-size:11px;margin-top:8px">
           root 权限的交互式 bash，和 SSH 上去一样。点终端区域唤起键盘；
-          软键盘打不出的键（Tab、方向键、Ctrl 组合）用上面那排按钮，CTRL/ALT 是粘滞键。
+          软键盘打不出的键（Tab、方向键、Ctrl 组合）用按键栏，CTRL/ALT 是粘滞键；
+          复制时先点“选择”再拖动，粘贴使用 Android 系统剪贴板。
         </div>
       </div>
 
@@ -467,6 +508,7 @@
 <div class="sheet" id="shWifi">
   <div class="in">
     <h3>连接到 <span id="shSsid" class="muted"></span></h3>
+    <div class="note">无线网卡：<span id="shWifiIface" class="mono"></span></div>
     <div class="note warn">切换 WiFi 时控制链路走蓝牙，不受影响。若新网络 30 秒内连不上，
       板子会自动还原到原来的配置。</div>
     <div class="field"><label>密码（开放网络留空）</label>
@@ -536,6 +578,8 @@ const native = {
   sendRaw: (b64) => AndroidBt.sendRaw(b64),
   sendResize: (cols, rows) => AndroidBt.sendResize(cols, rows),
   sendClose: () => AndroidBt.sendClose(),
+  clipboardGet: () => AndroidBt.getClipboardText(),
+  clipboardSet: (text) => AndroidBt.setClipboardText(text),
   pickUploadFile: () => AndroidBt.pickUploadFile(),
   readUploadChunk: (offset, length) => JSON.parse(AndroidBt.readUploadChunk(offset, length)),
   finishUploadFile: () => JSON.parse(AndroidBt.finishUploadFile()),
@@ -583,6 +627,7 @@ const ERR_HINT = {
   E_AUTH: "令牌错误或尚未鉴权",
   E_NOCMD: "板端不认识这条命令",
   E_ARGS: "参数不合法",
+  E_NOTFOUND: "指定的网卡或设备不存在",
   E_PERM: "该服务不在白名单内",
   E_CONFIRM: "危险动作缺少正确的 confirm 字段",
   E_SVC: "systemctl 操作失败",
@@ -687,6 +732,7 @@ function feed(line) {
       loadProxy(false);
       loadCapabilities().then(loadCustomInfo);
       if (curTab === "file") loadFiles(fileDir, false);
+      if (curTab === "dev") loadUsbDevices(true);
       /* 每次重建连接，终端相位都是干净的（裸相位不会跨连接存活） */
     } else {
       authed = false;
@@ -810,6 +856,7 @@ function onState(state, info) {
     connected = false; authed = false;
     gatewayCaps = []; terminalCaps = null; execAvailable = null;
     fileCaps = null;
+    networkIfaces = []; usbRows = []; usbNext = 0; usbEof = true;
     stopStream(); clearPending(); stopFollow();
     resetShell();                 // 裸相位不会跨连接存活，必须复位
     renderFiles();
@@ -1080,12 +1127,12 @@ function renderMetrics(d) {
   order.forEach(name => {
     if (!(name in nets)) return;
     const info = nets[name] || {};
-    const isWifi = /^wl/i.test(name);
-    const isUsb = /^wlx/i.test(name);
+    const isWifi = info.type === "wifi" || /^wl/i.test(name);
+    const isUsb = info.bus === "usb" || info.external || /^wlx/i.test(name);
     let on = false, sub = "未连接";
-    if (info.ssid) { on = true; sub = info.ssid + " · " + info.signal_dbm + " dBm"; }
-    else if (info.state) { on = !/down|no-carrier/i.test(String(info.state)); sub = on ? String(info.state) : "未连接"; }
+    if (info.ssid) { on = true; sub = info.ssid + (info.signal_dbm != null ? " · " + info.signal_dbm + " dBm" : ""); }
     else if (info.ip) { on = true; sub = String(info.ip); }
+    else if (info.state) { on = !/down|no-carrier/i.test(String(info.state)); sub = on ? String(info.state) : "未连接"; }
     const type = isUsb ? "USB WiFi" : isWifi ? "WiFi" : "有线";
     const div = document.createElement("div");
     div.className = "iface";
@@ -1312,22 +1359,100 @@ async function loadProxy(refresh) {
 }
 
 /* ============ 渲染：网络 ============ */
-async function loadNetwork() {
-  if (!authed) return;
+let networkIfaces = [], selectedWifiIface = localStorage.getItem("btr.wifi.iface") || "";
+
+function isWifiIface(item) {
+  return item && (item.type === "wifi" || /^wl/i.test(item.name || ""));
+}
+
+function renderNetworkIfaces() {
+  const box = $("#netIfaceList");
+  box.innerHTML = "";
+  if (!networkIfaces.length) {
+    box.innerHTML = "<div class='dim' style='font-size:12px'>（未发现网络接口）</div>";
+    return;
+  }
+  networkIfaces.forEach(info => {
+    const wifi = isWifiIface(info), usb = info.bus === "usb" || info.external;
+    const online = !!(info.ipv4 || info.ssid || /\bup\b/i.test(info.state || ""));
+    const detail = [];
+    if (info.ssid) detail.push(info.ssid + (info.signal_dbm != null ? " · " + info.signal_dbm + " dBm" : ""));
+    if (info.ipv4) detail.push(info.ipv4);
+    if (info.mac) detail.push(info.mac);
+    if (info.driver) detail.push("驱动 " + info.driver);
+    const div = document.createElement("div");
+    div.className = "iface";
+    div.innerHTML = "<div class='ic'>" + (wifi ? "📶" : "↔") + "</div>" +
+      "<div class='bd'><div class='nm'><span class='dot" + (online ? " on" : "") + "'></span>" +
+      esc(info.name) + (info.default ? " <span class='pill ok'>默认</span>" : "") + "</div>" +
+      "<div class='sub'>" + esc(detail.join(" · ") || info.state || "未连接") + "</div></div>" +
+      "<span class='tag'>" + (usb ? "USB " : "") + (wifi ? "WiFi" : "网卡") + "</span>";
+    box.appendChild(div);
+  });
+}
+
+async function loadWifiStatus() {
+  const iface = selectedWifiIface;
+  $("#wIface").textContent = iface || "--";
+  if (!iface) {
+    ["wSsid", "wSig", "wIp", "wGw"].forEach(id => $("#" + id).textContent = "--");
+    return;
+  }
   try {
-    const s = await send("net.wifi.status");
-    $("#wSsid").textContent = s.ssid || "--";
-    $("#wSig").textContent = s.signal_dbm ? s.signal_dbm + " dBm" : "--";
+    const s = await send("net.wifi.status", { iface: iface });
+    $("#wIface").textContent = s.iface || iface;
+    $("#wSsid").textContent = s.ssid || "未连接";
+    $("#wSig").textContent = s.signal_dbm != null ? s.signal_dbm + " dBm" : "--";
     $("#wIp").textContent = s.ip || "--";
     $("#wGw").textContent = s.gw || "--";
   } catch (e) { toast("网络状态获取失败：" + e.message); }
 }
 
-async function loadSaved() {
+async function loadNetwork() {
   if (!authed) return;
+  try {
+    networkIfaces = await send("net.ifaces") || [];
+    renderNetworkIfaces();
+    const adapters = networkIfaces.filter(isWifiIface);
+    const select = $("#wifiIface");
+    select.innerHTML = "";
+    if (gatewayCaps.length && !gatewayCaps.includes("multiwifi")) {
+      select.appendChild(new Option("需先升级板端网关", ""));
+      select.disabled = true;
+      selectedWifiIface = "";
+      $("#btnScan").disabled = true;
+      $("#wIface").textContent = "需升级板端";
+      ["wSsid", "wSig", "wIp", "wGw"].forEach(id => $("#" + id).textContent = "--");
+      return;
+    }
+    select.disabled = false;
+    adapters.forEach(info => {
+      const label = info.name + ((info.bus === "usb" || info.external) ? "（USB 无线网卡）" : "（板载无线）");
+      select.appendChild(new Option(label, info.name));
+    });
+    if (!adapters.some(info => info.name === selectedWifiIface)) {
+      selectedWifiIface = adapters.length ? adapters[0].name : "";
+    }
+    select.value = selectedWifiIface;
+    if (selectedWifiIface) localStorage.setItem("btr.wifi.iface", selectedWifiIface);
+    else localStorage.removeItem("btr.wifi.iface");
+    $("#btnScan").disabled = !selectedWifiIface;
+    await loadWifiStatus();
+  } catch (e) { toast("网络接口获取失败：" + e.message); }
+}
+$("#btnNetReload").onclick = () => loadNetwork().then(loadSaved);
+$("#wifiIface").onchange = () => {
+  selectedWifiIface = $("#wifiIface").value;
+  localStorage.setItem("btr.wifi.iface", selectedWifiIface);
+  $("#apList").innerHTML = "";
+  loadWifiStatus(); loadSaved();
+};
+
+async function loadSaved() {
+  if (!authed || !selectedWifiIface) return;
   const box = $("#savedList");
   try {
-    const list = await send("net.wifi.saved");
+    const list = await send("net.wifi.saved", { iface: selectedWifiIface });
     box.innerHTML = "";
     if (!list || !list.length) {
       box.innerHTML = "<div class='dim' style='font-size:12px'>（暂无已保存网络）</div>";
@@ -1341,7 +1466,7 @@ async function loadSaved() {
         "<span class='acts'><button class='danger'>忘记</button></span>";
       div.querySelector("button").onclick = async () => {
         if (!await confirmWord("忘记网络", "将从板子上删除「" + w.ssid + "」的保存记录与密码。", "FORGET")) return;
-        try { await send("net.wifi.forget", { ssid: w.ssid }); toast("已忘记 " + w.ssid); }
+        try { await send("net.wifi.forget", { iface: selectedWifiIface, ssid: w.ssid }); toast("已忘记 " + w.ssid); }
         catch (e) { toast("失败：" + e.message); }
         loadSaved();
       };
@@ -1353,10 +1478,11 @@ $("#btnSavedReload").onclick = loadSaved;
 
 $("#btnScan").onclick = async () => {
   if (!authed) { toast("请先连接并鉴权"); return; }
+  if (!selectedWifiIface) { toast("没有可用的无线网卡"); return; }
   const b = $("#btnScan");
   b.disabled = true; b.textContent = "扫描中…";
   try {
-    const list = await send("net.wifi.scan", { rescan: true }, 40000);
+    const list = await send("net.wifi.scan", { iface: selectedWifiIface, rescan: true }, 40000);
     const box = $("#apList");
     box.innerHTML = "";
     const arr = (list || []).slice().sort((x, y) => (y.signal_dbm || -99) - (x.signal_dbm || -99));
@@ -1388,8 +1514,9 @@ $("#btnScan").onclick = async () => {
 
 let wifiTarget = null;
 function openWifi(ap) {
-  wifiTarget = ap;
+  wifiTarget = Object.assign({}, ap, { iface: ap.iface || selectedWifiIface });
   $("#shSsid").textContent = ap.ssid || "";
+  $("#shWifiIface").textContent = wifiTarget.iface || "--";
   $("#shPsk").value = "";
   $("#shWifi").classList.add("show");
 }
@@ -1401,14 +1528,71 @@ $("#shOk").onclick = async () => {
   try {
     /* 板端实测 ~42s，超时必须 >45s，这里给 60s */
     const r = await send("net.wifi.connect", {
-      ssid: wifiTarget.ssid, psk: psk, hidden: false, timeout_s: 30
+      iface: wifiTarget.iface, ssid: wifiTarget.ssid, psk: psk, hidden: false, timeout_s: 30
     }, 300000);
     if (r && r.ok) { toast("已切换到 " + wifiTarget.ssid + (r.ip ? "，" + r.ip : "")); }
     else if (r && r.rolled_back) { toast("连不上（" + (r.err || "") + "），已自动还原到原网络"); }
     else { toast("切换失败：" + ((r && r.err) || "未知")); }
-    loadNetwork(); loadSaved();
+    loadNetwork().then(loadSaved);
   } catch (e) { toast("切换失败：" + e.message); }
 };
+
+/* ============ USB 外接设备 ============ */
+let usbRows = [], usbNext = 0, usbEof = true, usbBusy = false;
+const USB_KIND = { network: "网络", storage: "存储", hid: "输入设备", hub: "集线器",
+  wireless: "无线", audio: "音频", video: "视频", communication: "通信",
+  printer: "打印机", imaging: "图像", composite: "复合设备", vendor: "厂商设备", other: "其他" };
+
+function renderUsbDevices() {
+  const box = $("#usbList");
+  box.innerHTML = "";
+  usbRows.forEach(dev => {
+    const title = dev.product || ((dev.vendor_id || "????") + ":" + (dev.product_id || "????"));
+    const detail = [];
+    if (dev.manufacturer) detail.push(dev.manufacturer);
+    detail.push((dev.vendor_id || "????") + ":" + (dev.product_id || "????"));
+    if (dev.speed_mbps) detail.push(dev.speed_mbps + " Mbps");
+    if ((dev.drivers || []).length) detail.push("驱动 " + dev.drivers.join(", "));
+    else detail.push("未绑定驱动");
+    if ((dev.net_ifaces || []).length) detail.push("网卡 " + dev.net_ifaces.join(", "));
+    if ((dev.block_devices || []).length) detail.push("磁盘 /dev/" + dev.block_devices.join(", /dev/"));
+    if ((dev.tty_devices || []).length) detail.push("串口 /dev/" + dev.tty_devices.join(", /dev/"));
+    const div = document.createElement("div");
+    div.className = "li";
+    div.innerHTML = "<div class='nm'>" + esc(title) +
+      "<div class='sub'>" + esc(detail.join(" · ")) + "</div></div>" +
+      "<span class='pill " + ((dev.drivers || []).length ? "ok" : "warn") + "'>" +
+      esc(USB_KIND[dev.kind] || dev.kind || "USB") + "</span>";
+    box.appendChild(div);
+  });
+  if (!usbRows.length) box.innerHTML = "<div class='dim' style='font-size:12px'>（未发现外接 USB 设备）</div>";
+  $("#btnUsbMore").classList.toggle("hide", usbEof);
+}
+
+async function loadUsbDevices(reset) {
+  if (!authed || usbBusy) return;
+  if (gatewayCaps.length && !gatewayCaps.includes("device")) {
+    $("#usbState").textContent = "当前网关不支持 USB 设备列表，请升级板端。";
+    usbRows = []; usbEof = true; renderUsbDevices(); return;
+  }
+  usbBusy = true;
+  if (reset) { usbRows = []; usbNext = 0; usbEof = false; }
+  $("#usbState").textContent = "读取中…";
+  try {
+    const result = await send("device.usb.list", { offset: usbNext, limit: 8 });
+    usbRows = usbRows.concat(result.devices || []);
+    usbNext = Number(result.next_offset) || usbRows.length;
+    usbEof = !!result.eof;
+    $("#usbState").textContent = "已发现 " + (Number(result.count) || usbRows.length) + " 个外接 USB 设备";
+    renderUsbDevices();
+  } catch (e) {
+    $("#usbState").textContent = "读取失败：" + e.message;
+    toast("USB 设备获取失败：" + e.message);
+  }
+  usbBusy = false;
+}
+$("#btnUsbReload").onclick = () => loadUsbDevices(true);
+$("#btnUsbMore").onclick = () => loadUsbDevices(false);
 
 /* ============ 板端文件管理 ============ */
 let fileDir = "/root", fileRows = [], fileNext = 0, fileEof = true;
@@ -1833,7 +2017,7 @@ window.onAndroidBack = function () {
 };
 
 /* ============ 标签页 ============ */
-const TAB_ORDER = ["ov", "svc", "net", "pwr", "file", "tty"];
+const TAB_ORDER = ["ov", "svc", "net", "dev", "pwr", "file", "tty"];
 let curTab = "ov";
 
 function switchTab(name) {
@@ -1845,7 +2029,8 @@ function switchTab(name) {
   TAB_ORDER.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== name));
   if (name !== "tty") setTtyFull(false);   // 切走终端页时退出全屏
   if (name === "svc") { refreshServices(); loadProxy(false); }
-  if (name === "net") { loadNetwork(); loadSaved(); }
+  if (name === "net") loadNetwork().then(loadSaved);
+  if (name === "dev") loadUsbDevices(true);
   if (name === "file") loadFiles(fileDir, false);
   if (name === "ov") loadOverview();
   if (name === "tty") onTtyOpen();
@@ -1889,18 +2074,25 @@ let rawOn = false;                 // 是否已进入裸字节相位
 function resetShell() {
   rawOn = false;
   shellStarting = false;
+  resetTermWriteQueue();
+  setTermSelectMode(false);
+  if (termInited && term) term.clearSelection();
   sticky = null;
   paintShellBtns();
   paintSticky();
   ttyState("未启动");
 }
 let term = null, fitAddon = null, termInited = false;
+let termWriteQueue = [], termWriteBusy = false, termWriteEpoch = 0;
+let termSelectMode = false, termSelectAnchor = null;
+const TERM_RENDER_CHUNK = 16384;
 let sticky = null;                 // 粘滞修饰键：null | ctrl | alt
 let fitT = null;
 
 const TTY_QUICK_PROTO = ["sys.info", "sys.metrics", "svc.list", "net.wifi.status",
   "net.ifaces", "pwr.rtc.get", "term.caps", "term.exec {\"command\":\"uname -a\"}",
-  "file.list {\"path\":\"/root\",\"offset\":0,\"limit\":12}"];
+  "file.list {\"path\":\"/root\",\"offset\":0,\"limit\":12}",
+  "device.usb.list {\"offset\":0,\"limit\":8}"];
 
 /* ---- 字节 <-> base64：JS 与原生之间只过字符串 ---- */
 function u8ToB64(u8) {
@@ -1932,7 +2124,13 @@ function shellSend(u8) {
   }
   native.sendRaw(u8ToB64(u8));
 }
-function shellSendText(t) { shellSend(new TextEncoder().encode(t)); }
+function shellSendText(t) {
+  const bytes = new TextEncoder().encode(t);
+  const chunk = 16384;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    shellSend(bytes.slice(offset, Math.min(offset + chunk, bytes.length)));
+  }
+}
 
 /* ---- xterm 实例延迟创建：页签隐藏时容器尺寸为 0，量不出行列 ---- */
 function initTerm() {
@@ -1945,7 +2143,8 @@ function initTerm() {
   }
   term = new Terminal({
     fontFamily: 'ui-monospace, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace',
-    fontSize: 12.5, lineHeight: 1.15, cursorBlink: true, scrollback: 3000,
+    fontSize: 12.5, lineHeight: 1.15, cursorBlink: true, scrollback: 2000,
+    smoothScrollDuration: 0, scrollSensitivity: 1,
     theme: {
       background: "#070a10", foreground: "#c9d5e5", cursor: "#3b82f6",
       selectionBackground: "#26456e",
@@ -1958,12 +2157,142 @@ function initTerm() {
   term.open($("#termWrap"));
   term.onData(onTermData);
   term.onResize(({ cols, rows }) => { if (rawOn && isNative) native.sendResize(cols, rows); });
+  term.onSelectionChange(paintTermSelection);
+  bindTermTouchSelection();
   termInited = true;
   buildKb();
   fitTerm();
   term.writeln("\x1b[2m板子遥控 · 蓝牙 Shell\x1b[0m");
   term.writeln("\x1b[2m先在顶部连接并鉴权，再点「启动 Shell 会话」。\x1b[0m");
 }
+
+/* 输出分块排队：上一块解析/绘制完成后，下一块才在后续动画帧进入 xterm。 */
+function resetTermWriteQueue() {
+  termWriteEpoch++;
+  termWriteQueue = [];
+  termWriteBusy = false;
+}
+function queueTermWrite(bytes) {
+  for (let offset = 0; offset < bytes.length; offset += TERM_RENDER_CHUNK) {
+    termWriteQueue.push(bytes.slice(offset, Math.min(offset + TERM_RENDER_CHUNK, bytes.length)));
+  }
+  drainTermWriteQueue();
+}
+function drainTermWriteQueue() {
+  if (!termInited || !term || termWriteBusy || !termWriteQueue.length) return;
+  const chunk = termWriteQueue.shift();
+  const epoch = termWriteEpoch;
+  termWriteBusy = true;
+  try {
+    term.write(chunk, () => {
+      if (epoch !== termWriteEpoch) return;
+      termWriteBusy = false;
+      if (termWriteQueue.length) requestAnimationFrame(drainTermWriteQueue);
+    });
+  } catch (e) {
+    if (epoch !== termWriteEpoch) return;
+    termWriteBusy = false;
+    if (termWriteQueue.length) requestAnimationFrame(drainTermWriteQueue);
+  }
+}
+
+function paintTermSelection() {
+  const has = !!(termInited && term && term.hasSelection());
+  $("#btnTermCopy").disabled = !has;
+}
+function setTermSelectMode(on) {
+  termSelectMode = !!on && termInited && !!term;
+  termSelectAnchor = null;
+  $("#termWrap").classList.toggle("selecting", termSelectMode);
+  $("#btnTermSelect").classList.toggle("active", termSelectMode);
+  $("#btnTermSelect").textContent = termSelectMode ? "退出选择" : "选择";
+  $("#termSelectHint").classList.toggle("hide", !termSelectMode);
+  if (term) {
+    term.options.disableStdin = termSelectMode;
+    if (termSelectMode) term.blur();
+  }
+  paintTermSelection();
+}
+function termCellAt(touch) {
+  if (!term || !term.element) return null;
+  const screen = term.element.querySelector(".xterm-screen");
+  if (!screen) return null;
+  const rect = screen.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const col = Math.max(0, Math.min(term.cols - 1,
+    Math.floor((touch.clientX - rect.left) / (rect.width / term.cols))));
+  const viewRow = Math.max(0, Math.min(term.rows - 1,
+    Math.floor((touch.clientY - rect.top) / (rect.height / term.rows))));
+  const viewportY = Number(term.buffer && term.buffer.active && term.buffer.active.viewportY) || 0;
+  return { col: col, row: viewportY + viewRow };
+}
+function selectTermRange(from, to) {
+  if (!term || !from || !to) return;
+  let start = from.row * term.cols + from.col;
+  let end = to.row * term.cols + to.col;
+  if (end < start) { const swap = start; start = end; end = swap; }
+  term.select(start % term.cols, Math.floor(start / term.cols), end - start + 1);
+}
+function bindTermTouchSelection() {
+  const wrap = $("#termWrap");
+  const capture = { passive: false, capture: true };
+  wrap.addEventListener("touchstart", event => {
+    if (!termSelectMode || event.touches.length !== 1) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    termSelectAnchor = termCellAt(event.touches[0]);
+    selectTermRange(termSelectAnchor, termSelectAnchor);
+  }, capture);
+  wrap.addEventListener("touchmove", event => {
+    if (!termSelectMode || !termSelectAnchor || event.touches.length !== 1) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    selectTermRange(termSelectAnchor, termCellAt(event.touches[0]));
+  }, capture);
+  const finish = event => {
+    if (!termSelectMode || !termSelectAnchor) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    termSelectAnchor = null;
+    paintTermSelection();
+  };
+  wrap.addEventListener("touchend", finish, capture);
+  wrap.addEventListener("touchcancel", finish, capture);
+}
+
+async function copyText(text) {
+  if (isNative) return native.clipboardSet(text);
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { }
+  const area = document.createElement("textarea");
+  area.value = text; area.style.position = "fixed"; area.style.opacity = "0";
+  document.body.appendChild(area); area.select();
+  let ok = false; try { ok = document.execCommand("copy"); } catch (e) { }
+  area.remove(); return ok;
+}
+async function readClipboardText() {
+  if (isNative) return native.clipboardGet() || "";
+  try { return await navigator.clipboard.readText(); } catch (e) { return ""; }
+}
+
+$("#btnTermSelect").onclick = () => setTermSelectMode(!termSelectMode);
+$("#btnTermAll").onclick = () => {
+  if (!termInited || !term) { toast("终端尚未初始化"); return; }
+  setTermSelectMode(true); term.selectAll(); paintTermSelection();
+};
+$("#btnTermCopy").onclick = async () => {
+  const text = termInited && term ? term.getSelection() : "";
+  if (!text) { toast("请先选择终端文字"); return; }
+  const clipped = text.slice(0, 256 * 1024);
+  const ok = await copyText(clipped);
+  toast(ok ? (clipped.length < text.length ? "内容过长，已复制前 262144 个字符" :
+    "已复制 " + text.length + " 个字符") : "复制失败");
+  if (ok) setTermSelectMode(false);
+};
+$("#btnTermPaste").onclick = async () => {
+  if (!rawOn || !termInited || !term) { toast("请先启动 Shell 会话"); return; }
+  const text = await readClipboardText();
+  if (!text) { toast("剪贴板没有文本"); return; }
+  clearSticky(); setTermSelectMode(false); term.clearSelection();
+  term.paste(text);
+  toast("已粘贴 " + text.length + " 个字符");
+};
 
 /* 键盘输入 -> PTY。粘滞 CTRL/ALT 在这里生效（软键盘发不出这些组合键） */
 function onTermData(d) {
@@ -2132,6 +2461,7 @@ function switchTty(kind) {
     initTerm(); fitSoon();
     try { if (term) term.focus(); } catch (e) { }
   } else {
+    setTermSelectMode(false);
     renderTtyQuick();
   }
 }
@@ -2229,7 +2559,7 @@ window.onBtRaw = function (b64) {
   if (!termInited || typeof Terminal === "undefined") return;
   let u8;
   try { u8 = b64ToU8(b64); } catch (e) { return; }
-  try { term.write(u8); } catch (e) { }
+  queueTermWrite(u8);
 
 };
 
@@ -2291,7 +2621,7 @@ function startDemo() {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
 
     if (m.t === "auth") {
-      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file"] }));
+      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "multiwifi"] }));
       return;
     }
     const id = m.id;
@@ -2320,9 +2650,24 @@ function startDemo() {
       toast("演示：不下发真实动作");
       return ok({ unit: u, active: "active", enabled: "enabled" });
     }
-    if (m.name === "net.wifi.status") return ok({ ssid: "630", bssid: "f4:fc:49:45:c9:75", signal_dbm: -26, freq: 5220, ip: "192.168.2.20/16", gw: "192.168.2.1", dns: "192.168.2.1", backend: "netplan" });
-    if (m.name === "net.wifi.scan") return ok(A);
-    if (m.name === "net.wifi.saved") return ok([{ ssid: "630", has_psk: true }, { ssid: "TP-LINK_2.4G", has_psk: true }]);
+    if (m.name === "net.ifaces") return ok([
+      { name: "wlan0", type: "wifi", bus: "platform", external: false, driver: "sprdwl_ng",
+        state: "UP", ipv4: "192.168.2.20", mac: "02:11:22:33:44:55", ssid: "630", signal_dbm: -26, default: true },
+      { name: "wlx801f028e3491", type: "wifi", bus: "usb", external: true, driver: "rtl8xxxu",
+        state: "DOWN", ipv4: null, mac: "80:1f:02:8e:34:91", ssid: null, signal_dbm: null, default: false },
+      { name: "end0", type: "ethernet", bus: "platform", external: false, driver: "dwmac_sun8i",
+        state: "DOWN", ipv4: null, mac: "02:aa:bb:cc:dd:ee", default: false }
+    ]);
+    if (m.name === "net.wifi.status") {
+      const iface = m.args.iface || "wlan0";
+      return ok({ iface: iface, ssid: iface === "wlan0" ? "630" : null,
+        bssid: iface === "wlan0" ? "f4:fc:49:45:c9:75" : null,
+        signal_dbm: iface === "wlan0" ? -26 : null, freq: iface === "wlan0" ? 5220 : null,
+        ip: iface === "wlan0" ? "192.168.2.20" : null,
+        gw: iface === "wlan0" ? "192.168.2.1" : null, dns: ["192.168.2.1"], backend: "netplan" });
+    }
+    if (m.name === "net.wifi.scan") return ok(A.map(ap => Object.assign({}, ap, { iface: m.args.iface || "wlan0" })));
+    if (m.name === "net.wifi.saved") return ok([{ iface: m.args.iface || "wlan0", ssid: "630", has_psk: true }, { iface: m.args.iface || "wlan0", ssid: "TP-LINK_2.4G", has_psk: true }]);
     if (m.name === "net.wifi.forget") return ok({ ok: true });
     if (m.name === "net.wifi.connect") {
       setTimeout(() => ok({ ok: true, tried: m.args.ssid, rolled_back: false, ip: "192.168.2.31/24" }), 1400);
@@ -2336,6 +2681,14 @@ function startDemo() {
       return ok({ ok: true });
     }
     if (m.name === "pwr.reboot" || m.name === "pwr.poweroff") return ok({ ok: true });
+    if (m.name === "device.usb.list") return ok({ count: 2, next_offset: 2, eof: true, devices: [
+      { id: "1-1", vendor_id: "0bda", product_id: "8179", manufacturer: "Realtek",
+        product: "802.11n WLAN Adapter", speed_mbps: 480, kind: "network", drivers: ["rtl8xxxu"],
+        net_ifaces: ["wlx801f028e3491"], block_devices: [], tty_devices: [], authorized: true },
+      { id: "2-1", vendor_id: "0781", product_id: "5581", manufacturer: "SanDisk",
+        product: "Ultra", speed_mbps: 5000, kind: "storage", drivers: ["usb-storage"],
+        net_ifaces: [], block_devices: ["sda"], tty_devices: [], authorized: true }
+    ] });
     if (m.name === "file.caps") return ok({ root: "/", chunk_bytes: 1536,
       max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true });
     if (m.name === "file.list") {

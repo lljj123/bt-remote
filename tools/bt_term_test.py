@@ -74,10 +74,17 @@ def main():
         auth = peer.line()
         assert auth.get("ok") is True
         assert "file" in auth.get("caps", []), auth
+        assert "device" in auth.get("caps", []), auth
+        assert "multiwifi" in auth.get("caps", []), auth
         peer.send({"t": "cmd", "id": 99, "name": "file.caps", "args": {}})
         file_caps = peer.response(99)["data"]
         assert file_caps["chunk_bytes"] == 1536, file_caps
         print("PASS: file manager capability")
+        peer.send({"t": "cmd", "id": 98, "name": "device.usb.list",
+                   "args": {"offset": 0, "limit": 1}})
+        usb = peer.response(98)["data"]
+        assert isinstance(usb.get("devices"), list), usb
+        print("PASS: USB device inventory capability")
         peer.send({"t": "cmd", "id": 100, "name": "term.exec",
                    "args": {"command": "printf bt-exec-ok"}})
         executed = peer.response(100)["data"]

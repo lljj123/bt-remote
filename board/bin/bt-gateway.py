@@ -73,6 +73,10 @@ SOCK_PATH = "/run/bt-gateway.sock"
 NETPLAN_WIFI = os.environ.get("BTG_NETPLAN_WIFI", "/etc/netplan/30-wifis-dhcp.yaml")
 NETPLAN_GLOB = "/etc/netplan/*.yaml"
 WLAN = os.environ.get("BTG_WLAN", "wlan0")
+SYS_CLASS_NET = os.environ.get("BTG_SYS_CLASS_NET", "/sys/class/net")
+SYS_CLASS_BLOCK = os.environ.get("BTG_SYS_CLASS_BLOCK", "/sys/class/block")
+SYS_CLASS_TTY = os.environ.get("BTG_SYS_CLASS_TTY", "/sys/class/tty")
+SYS_USB_DEVICES = os.environ.get("BTG_SYS_USB_DEVICES", "/sys/bus/usb/devices")
 BT_ADDR_PATH = "/sys/class/bluetooth/hci0/address"
 BT_STORE = "/var/lib/bluetooth"
 MAC_RE = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
@@ -86,7 +90,7 @@ SRV_NAME = "OrangePi 3LTS Gateway"
 VER = 1
 DEV_ID = "orangepi-3lts"
 DEV_NAME = os.environ.get("BTG_DEV_NAME", "Orange Pi Bluetooth Gateway")
-CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file"]
+CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "multiwifi"]
 
 MIHOMO_API = os.environ.get("BTG_MIHOMO_API", "").rstrip("/")
 MIHOMO_SECRET_FILE = os.environ.get("BTG_MIHOMO_SECRET_FILE", "")
@@ -115,6 +119,7 @@ SVC_ACTIONS = ("start", "stop", "restart", "enable", "disable")
 DANGEROUS_SVC = {("ssh.service", "stop"), ("ssh.service", "disable")}
 
 UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:\\-]{0,127}$")
+IFACE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,63}$")
 SSID_MAX = 32
 ALERT_COOLDOWN = 300
 
@@ -578,10 +583,70 @@ def cpu_temp_c():
     return best
 
 
-def wifi_link():
-    """iw dev wlan0 link 解析 -> dict（未连接时 ssid 为 None）。"""
+def wireless_ifaces():
+    """Return every currently-present wireless interface, including USB WiFi."""
+    names = set()
+    try:
+        for name in os.listdir(SYS_CLASS_NET):
+            base = os.path.join(SYS_CLASS_NET, name)
+            if (os.path.isdir(os.path.join(base, "wireless")) or
+                    os.path.exists(os.path.join(base, "phy80211"))):
+                names.add(name)
+    except OSError:
+        pass
+    rc, out, _ = run(["iw", "dev"], timeout=5)
+    if rc == 0:
+        for line in out.splitlines():
+            match = re.match(r"\s*Interface\s+(\S+)\s*$", line)
+            if match and IFACE_RE.fullmatch(match.group(1)):
+                names.add(match.group(1))
+    return sorted(names)
+
+
+def checked_iface(value, wireless=False):
+    if not isinstance(value, str) or not IFACE_RE.fullmatch(value):
+        raise CmdError("E_ARGS", "invalid network interface")
+    if not os.path.isdir(os.path.join(SYS_CLASS_NET, value)):
+        raise CmdError("E_NOTFOUND", "network interface not found: %s" % value)
+    if wireless and value not in wireless_ifaces():
+        raise CmdError("E_ARGS", "interface is not wireless: %s" % value)
+    return value
+
+
+def wifi_iface_arg(a):
+    value = a.get("iface", WLAN) if isinstance(a, dict) else WLAN
+    return checked_iface(value, wireless=True)
+
+
+def iface_hardware(name, wifi_names=None):
+    """Describe the physical transport and bound driver for a net interface."""
+    base = os.path.join(SYS_CLASS_NET, name)
+    device = os.path.realpath(os.path.join(base, "device"))
+    driver_link = os.path.join(base, "device", "driver")
+    driver = os.path.basename(os.path.realpath(driver_link)) if os.path.exists(driver_link) else None
+    if "/usb" in device:
+        bus = "usb"
+    elif "/pci" in device:
+        bus = "pci"
+    elif "/platform/" in device:
+        bus = "platform"
+    elif os.path.exists(os.path.join(base, "device")):
+        bus = "other"
+    else:
+        bus = "virtual"
+    wifi_names = set(wifi_names if wifi_names is not None else wireless_ifaces())
+    return {"type": "wifi" if name in wifi_names else "ethernet",
+            "bus": bus, "external": bus == "usb", "driver": driver}
+
+
+def wifi_link(iface=None):
+    """Parse ``iw dev <iface> link``; an unassociated adapter has ssid=None."""
+    iface = iface or WLAN
+    if not isinstance(iface, str) or not IFACE_RE.fullmatch(iface):
+        return {"ssid": None, "bssid": None, "signal_dbm": None, "freq": None}
+
     def _q():
-        rc, out, _ = run(["iw", "dev", WLAN, "link"], timeout=5)
+        rc, out, _ = run(["iw", "dev", iface, "link"], timeout=5)
         d = {"ssid": None, "bssid": None, "signal_dbm": None, "freq": None}
         if rc != 0:
             return d
@@ -601,11 +666,14 @@ def wifi_link():
                 if m:
                     d["signal_dbm"] = int(m.group(1))
         return d
-    return memo("iwlink", 3.0, _q)
+    return memo("iwlink:" + iface, 3.0, _q)
 
 
-def default_gateway():
-    rc, out, _ = run(["ip", "-4", "route", "show", "default"], timeout=5)
+def default_gateway(iface=None):
+    command = ["ip", "-4", "route", "show", "default"]
+    if iface:
+        command.extend(["dev", iface])
+    rc, out, _ = run(command, timeout=5)
     for line in out.splitlines():
         p = line.split()
         if "via" in p:
@@ -670,16 +738,21 @@ def build_metrics():
     root_used = (st.f_blocks - st.f_bfree) * st.f_frsize // 1024
 
     net = {}
-    for name in (WLAN, "end0"):
+    wifi_names = set(wireless_ifaces())
+    names = sorted((set(cur["net"]) | set(prev["net"])) - {"lo"},
+                   key=lambda item: (item not in wifi_names, item))
+    for name in names:
         c = cur["net"].get(name)
         p = prev["net"].get(name, c)
         d = {"rx_bps": int(max((c[0] - p[0]) / dt, 0)) if c and p else 0,
              "tx_bps": int(max((c[1] - p[1]) / dt, 0)) if c and p else 0}
-        carrier = rd("/sys/class/net/%s/carrier" % name, "")
+        carrier = rd(os.path.join(SYS_CLASS_NET, name, "carrier"), "")
         d["state"] = "no-carrier" if carrier == "0" else rd(
-            "/sys/class/net/%s/operstate" % name, "unknown")
-        if name == WLAN:
-            lk = wifi_link()
+            os.path.join(SYS_CLASS_NET, name, "operstate"), "unknown")
+        d.update(iface_hardware(name, wifi_names))
+        d["ip"] = iface_ipv4(name)
+        if name in wifi_names:
+            lk = wifi_link(name)
             d["ssid"] = lk["ssid"]
             d["signal_dbm"] = lk["signal_dbm"]
         net[name] = d
@@ -821,36 +894,49 @@ def cmd_net_ifaces(_s, _a):
     except Exception:
         raise CmdError("E_NET", "ip -j addr failed")
     res = []
+    wifi_names = set(wireless_ifaces())
     for dev in arr:
         name = dev.get("ifname")
-        if name == "lo":
+        if name == "lo" or not isinstance(name, str):
             continue
         rcm, om, _ = run(["ip", "-j", "-4", "route", "show", "dev", name], timeout=5)
         metric = None
+        is_default = False
         try:
             for r in json.loads(om):
                 if "metric" in r:
                     metric = min(metric, r["metric"]) if metric is not None else r["metric"]
+                if r.get("dst") == "default":
+                    is_default = True
         except Exception:
             pass
-        res.append({"name": name,
-                    "state": dev.get("operstate", "unknown"),
-                    "ipv4": iface_ipv4(name),
-                    "mac": dev.get("address"),
-                    "metric": metric})
+        item = {"name": name,
+                "state": dev.get("operstate", "unknown"),
+                "ipv4": iface_ipv4(name),
+                "mac": dev.get("address"),
+                "metric": metric,
+                "default": is_default,
+                "carrier": rd(os.path.join(SYS_CLASS_NET, name, "carrier")) == "1"}
+        item.update(iface_hardware(name, wifi_names))
+        if name in wifi_names:
+            item.update(wifi_link(name))
+        res.append(item)
+    res.sort(key=lambda item: (item["type"] != "wifi", not item["external"], item["name"]))
     return res
 
 
-def cmd_net_wifi_status(_s, _a):
-    lk = wifi_link()
-    return {"ssid": lk["ssid"], "bssid": lk["bssid"],
+def cmd_net_wifi_status(_s, a):
+    iface = wifi_iface_arg(a)
+    lk = wifi_link(iface)
+    return {"iface": iface, "ssid": lk["ssid"], "bssid": lk["bssid"],
             "signal_dbm": lk["signal_dbm"], "freq": lk["freq"],
-            "ip": iface_ipv4(WLAN), "gw": default_gateway(),
-            "dns": netplan_dns(), "backend": "netplan"}
+            "ip": iface_ipv4(iface), "gw": default_gateway(iface),
+            "dns": netplan_dns(iface), "backend": "netplan"}
 
 
-def netplan_dns():
-    rc, out, _ = run(["resolvectl", "dns", WLAN], timeout=5)
+def netplan_dns(iface=None):
+    iface = iface or WLAN
+    rc, out, _ = run(["resolvectl", "dns", iface], timeout=5)
     if rc == 0 and ":" in out:
         tail = out.split(":", 1)[1].split()
         addrs = [x for x in tail if re.match(r"^[0-9a-fA-F:.]+$", x)]
@@ -922,8 +1008,8 @@ def parse_iw_scan(text):
     return [a for a in aps]
 
 
-def known_ssids():
-    """netplan 里配过的 SSID -> has_psk。"""
+def known_ssids(iface=None):
+    """Return saved Netplan SSIDs for one adapter (or all adapters)."""
     out = {}
     for path in sorted(glob.glob(NETPLAN_GLOB)):
         try:
@@ -933,7 +1019,9 @@ def known_ssids():
         except Exception:
             continue
         wifis = ((data.get("network") or {}).get("wifis") or {})
-        for _dev, cfg in wifis.items():
+        for dev, cfg in wifis.items():
+            if iface is not None and dev != iface:
+                continue
             aps = (cfg or {}).get("access-points") or {}
             for ssid, v in aps.items():
                 out[str(ssid)] = bool(isinstance(v, dict) and v.get("password"))
@@ -961,15 +1049,18 @@ def _unescape_iw(s):
     return out.decode("utf-8", "replace")
 
 
-def _scan_raw():
+def _scan_raw(iface):
     """UWE5622 上 `iw scan`（阻塞等完成）会挂死，改用 trigger + dump。"""
-    rc, _o, err = run(["iw", "dev", WLAN, "scan", "trigger"], timeout=10)
+    rc, _o, err = run(["ip", "link", "set", "dev", iface, "up"], timeout=10)
+    if rc != 0:
+        raise CmdError("E_SCAN", (err or "cannot bring wireless interface up").strip()[:200])
+    rc, _o, err = run(["iw", "dev", iface, "scan", "trigger"], timeout=10)
     if rc != 0:
         raise CmdError("E_SCAN", (err or "iw scan trigger failed").strip()[:200])
     best = ""
     for _ in range(8):
         time.sleep(2)
-        rc, out, err = run(["iw", "dev", WLAN, "scan", "dump"], timeout=15)
+        rc, out, err = run(["iw", "dev", iface, "scan", "dump"], timeout=15)
         if rc == 0 and out.count("BSS ") >= 1:
             return out
         best = out or best
@@ -979,17 +1070,20 @@ def _scan_raw():
 
 
 def cmd_net_wifi_scan(_s, a):
+    iface = wifi_iface_arg(a)
+    cache_key = "iwscan:" + iface
     if isinstance(a, dict) and a.get("rescan") is False:
-        out = memo("iwscan", 20.0, _scan_raw)
+        out = memo(cache_key, 20.0, lambda: _scan_raw(iface))
     else:
-        out = _scan_raw()
+        out = _scan_raw(iface)
         with _MEMO_LOCK:
-            _MEMO["iwscan"] = (time.time(), out)
+            _MEMO[cache_key] = (time.time(), out)
     aps = parse_iw_scan(out)
-    cur = wifi_link()
-    known = known_ssids()
+    cur = wifi_link(iface)
+    known = known_ssids(iface)
     for ap in aps:
         assoc = ap.pop("_assoc", False)
+        ap["iface"] = iface
         ap["in_use"] = bool(
             (cur["bssid"] and ap["bssid"].lower() == cur["bssid"].lower()) or assoc)
         ap["known"] = ap["ssid"] in known if ap["ssid"] else False
@@ -997,18 +1091,22 @@ def cmd_net_wifi_scan(_s, a):
     return aps
 
 
-def cmd_net_wifi_saved(_s, _a):
-    return [{"ssid": k, "has_psk": v} for k, v in sorted(known_ssids().items())]
+def cmd_net_wifi_saved(_s, a):
+    iface = wifi_iface_arg(a)
+    return [{"iface": iface, "ssid": key, "has_psk": value}
+            for key, value in sorted(known_ssids(iface).items())]
 
 
-def _netplan_set_ap(ssid, psk):
+def _netplan_set_ap(iface, ssid, psk):
     """改 30-wifis-dhcp.yaml 的 access-points；其它字段原样保留。"""
     import yaml
     with open(NETPLAN_WIFI) as f:
         data = yaml.safe_load(f) or {}
     net = data.setdefault("network", {})
     wifis = net.setdefault("wifis", {})
-    cfg = wifis.setdefault(WLAN, {})
+    cfg = wifis.setdefault(iface, {})
+    cfg.setdefault("dhcp4", True)
+    cfg.setdefault("optional", True)
     entry = {}
     if psk:
         entry["password"] = psk
@@ -1028,7 +1126,7 @@ def _wifi_ok(timeout_s, want_iface=WLAN, want_ssid=None):
     ip = None
     while time.monotonic() < deadline:
         ip = iface_ipv4(want_iface)
-        if ip and (want_ssid is None or wifi_link()["ssid"] == want_ssid):
+        if ip and (want_ssid is None or wifi_link(want_iface)["ssid"] == want_ssid):
             rc, routes, _ = run(["ip", "-4", "route", "show", "default", "dev", want_iface])
             match = re.search(r"\bvia\s+(\S+)", routes) if rc == 0 else None
             gw = match.group(1) if match else None
@@ -1081,8 +1179,11 @@ def network_transaction(fn):
 def cmd_net_wifi_connect(_s, a):
     if not isinstance(a, dict):
         raise CmdError("E_ARGS", "args must be object")
+    iface = wifi_iface_arg(a)
     ssid = a.get("ssid")
     psk = a.get("psk")
+    if psk == "":
+        psk = None
     if not isinstance(ssid, str) or not ssid.strip():
         raise CmdError("E_ARGS", "ssid required")
     if len(ssid.encode("utf-8")) > SSID_MAX:
@@ -1106,32 +1207,37 @@ def cmd_net_wifi_connect(_s, a):
     backup = os.path.join(BACKUP_ROOT, "netplan.bak.%s" % ts)
     shutil.copy2(NETPLAN_WIFI, backup)
     os.chmod(backup, 0o600)
-    log("wifi.connect: ssid=%r backup=%s" % (ssid, backup))
+    restore_iface = next((name for name in wireless_ifaces()
+                          if iface_ipv4(name) and default_gateway(name)), None)
+    log("wifi.connect: iface=%s ssid=%r backup=%s" % (iface, ssid, backup))
 
     # Budget includes apply (60s), validation, rollback apply (60s),
     # rollback validation (30s), and subprocess/cleanup overhead.
     _guard_arm(backup, timeout_s + 240)
     try:
-        _netplan_set_ap(ssid, psk)
+        _netplan_set_ap(iface, ssid, psk)
         rc, _o, err = run(["netplan", "apply"], timeout=60)
         if rc != 0:
             raise CmdError("E_NETPLAN", (err or "netplan apply failed").strip()[:200])
-        ok, ip = _wifi_ok(timeout_s, want_ssid=ssid)
+        ok, ip = _wifi_ok(timeout_s, want_iface=iface, want_ssid=ssid)
         if ok:
             _guard_disarm()
-            return {"ok": True, "tried": ssid, "rolled_back": False, "ip": ip}
+            return {"ok": True, "iface": iface, "tried": ssid,
+                    "rolled_back": False, "ip": ip}
         raise CmdError("E_WIFI_FAIL", "new network is unreachable")
     except Exception as error:
         shutil.copy2(backup, NETPLAN_WIFI)
         os.chmod(NETPLAN_WIFI, 0o600)
         rc, _, _ = run(["netplan", "apply"], timeout=60)
-        restored, _ = _wifi_ok(30)
+        restored = True if restore_iface is None else _wifi_ok(
+            30, want_iface=restore_iface)[0]
         if rc != 0 or not restored:
             raise CmdError("E_NET", "rollback not verified; watchdog remains armed") from error
         _guard_disarm()
         if isinstance(error, CmdError) and error.code == "E_WIFI_FAIL":
-            return {"ok": False, "tried": ssid, "rolled_back": True,
-                    "ip": iface_ipv4(WLAN), "err": "E_WIFI_FAIL"}
+            return {"ok": False, "iface": iface, "tried": ssid,
+                    "rolled_back": True, "ip": iface_ipv4(iface),
+                    "err": "E_WIFI_FAIL"}
         raise
 
 
@@ -1143,7 +1249,8 @@ def cmd_net_wifi_forget(_s, a):
     ssid = a["ssid"]
     if not isinstance(ssid, str):
         raise CmdError("E_ARGS", "ssid must be string")
-    cur = wifi_link()
+    iface = wifi_iface_arg(a)
+    cur = wifi_link(iface)
     if cur["ssid"] == ssid:
         raise CmdError("E_IN_USE",
                        "refusing to forget the SSID currently in use "
@@ -1157,7 +1264,9 @@ def cmd_net_wifi_forget(_s, a):
         except Exception:
             continue
         wifis = ((data.get("network") or {}).get("wifis") or {})
-        for _dev, cfg in wifis.items():
+        for dev, cfg in wifis.items():
+            if dev != iface:
+                continue
             aps = (cfg or {}).get("access-points") or {}
             if ssid in aps:
                 aps.pop(ssid)
@@ -1173,7 +1282,129 @@ def cmd_net_wifi_forget(_s, a):
         rc, _, err = run(["netplan", "apply"], timeout=60)
         if rc != 0:
             raise CmdError("E_NETPLAN", err[:200])
-    return {"ok": True, "removed_from": changed}
+    return {"ok": True, "iface": iface, "removed_from": changed}
+
+
+# ------------------------------------------------------------------ device.*
+USB_CLASS_NAMES = {
+    "01": "audio", "02": "communication", "03": "hid", "06": "imaging",
+    "07": "printer", "08": "storage", "09": "hub", "0e": "video",
+    "e0": "wireless", "ef": "composite", "ff": "vendor",
+}
+
+
+def _short_sysfs(path, limit=96):
+    return rd(path)[:limit] or None
+
+
+def _path_below(child, parent):
+    try:
+        return os.path.commonpath([os.path.realpath(child), os.path.realpath(parent)]) == os.path.realpath(parent)
+    except (OSError, ValueError):
+        return False
+
+
+def _usb_bound_names(class_root, device_path, skip_partitions=False):
+    names = []
+    try:
+        candidates = os.listdir(class_root)
+    except OSError:
+        return names
+    for name in candidates:
+        entry = os.path.join(class_root, name)
+        if skip_partitions and os.path.exists(os.path.join(entry, "partition")):
+            continue
+        target = os.path.join(entry, "device")
+        if os.path.exists(target) and _path_below(target, device_path):
+            names.append(name)
+    return sorted(names)[:8]
+
+
+def _usb_device(path):
+    sys_name = os.path.basename(path)
+    class_code = (rd(os.path.join(path, "bDeviceClass")) or "").lower()
+    interface_classes = []
+    drivers = []
+    for interface in sorted(glob.glob(path + ":*")):
+        code = (rd(os.path.join(interface, "bInterfaceClass")) or "").lower()
+        if code and code not in interface_classes:
+            interface_classes.append(code)
+        link = os.path.join(interface, "driver")
+        if os.path.exists(link):
+            driver = os.path.basename(os.path.realpath(link))
+            if driver and driver not in drivers:
+                drivers.append(driver)
+    net_ifaces = _usb_bound_names(SYS_CLASS_NET, path)
+    block_devices = _usb_bound_names(SYS_CLASS_BLOCK, path, skip_partitions=True)
+    tty_devices = _usb_bound_names(SYS_CLASS_TTY, path)
+    effective_classes = interface_classes or ([class_code] if class_code else [])
+    if net_ifaces:
+        kind = "network"
+    elif block_devices or "08" in effective_classes:
+        kind = "storage"
+    elif "03" in effective_classes:
+        kind = "hid"
+    elif "09" in effective_classes:
+        kind = "hub"
+    elif "e0" in effective_classes:
+        kind = "wireless"
+    else:
+        kind = USB_CLASS_NAMES.get(class_code, "other")
+    authorized_raw = rd(os.path.join(path, "authorized"), "")
+    speed_raw = rd(os.path.join(path, "speed"), "")
+    try:
+        speed = float(speed_raw)
+        speed = int(speed) if speed.is_integer() else speed
+    except (TypeError, ValueError):
+        speed = None
+    return {
+        "id": sys_name,
+        "busnum": rdi(os.path.join(path, "busnum")),
+        "devnum": rdi(os.path.join(path, "devnum")),
+        "vendor_id": (rd(os.path.join(path, "idVendor")) or "").lower(),
+        "product_id": (rd(os.path.join(path, "idProduct")) or "").lower(),
+        "manufacturer": _short_sysfs(os.path.join(path, "manufacturer"), 64),
+        "product": _short_sysfs(os.path.join(path, "product"), 96),
+        "serial": _short_sysfs(os.path.join(path, "serial"), 64),
+        "speed_mbps": speed,
+        "usb_version": _short_sysfs(os.path.join(path, "version"), 16),
+        "class": class_code,
+        "interface_classes": effective_classes[:8],
+        "kind": kind,
+        "drivers": drivers[:8],
+        "net_ifaces": net_ifaces,
+        "block_devices": block_devices,
+        "tty_devices": tty_devices,
+        "authorized": None if authorized_raw == "" else authorized_raw == "1",
+    }
+
+
+def cmd_device_usb_list(_s, a):
+    a = a or {}
+    try:
+        offset = int(a.get("offset", 0))
+        limit = int(a.get("limit", 8))
+    except (TypeError, ValueError):
+        raise CmdError("E_ARGS", "offset/limit must be integers")
+    if offset < 0 or not (1 <= limit <= 8):
+        raise CmdError("E_ARGS", "offset must be >=0 and limit must be 1..8")
+    paths = []
+    for path in glob.glob(os.path.join(SYS_USB_DEVICES, "*")):
+        name = os.path.basename(path)
+        if name.startswith("usb") or ":" in name:
+            continue
+        if rd(os.path.join(path, "idVendor")) and rd(os.path.join(path, "idProduct")):
+            paths.append(path)
+    paths.sort(key=lambda item: (rdi(os.path.join(item, "busnum"), 9999),
+                                 rdi(os.path.join(item, "devnum"), 9999), item))
+    rows = [_usb_device(path) for path in paths[offset:offset + limit]]
+    # Keep pagination intact instead of letting the generic frame shrinker drop
+    # half the rows while retaining a now-invalid next_offset.
+    while len(rows) > 1 and len(jdump({"devices": rows}).encode("utf-8")) > 3400:
+        rows.pop()
+    next_offset = offset + len(rows)
+    return {"devices": rows, "count": len(paths), "next_offset": next_offset,
+            "eof": next_offset >= len(paths)}
 
 
 # ------------------------------------------------------------------ pwr.*
@@ -2011,6 +2242,7 @@ COMMANDS = {
     "net.wifi.saved": cmd_net_wifi_saved,
     "net.wifi.connect": cmd_net_wifi_connect,
     "net.wifi.forget": cmd_net_wifi_forget,
+    "device.usb.list": cmd_device_usb_list,
     "pwr.reboot": cmd_pwr_reboot,
     "pwr.poweroff": cmd_pwr_poweroff,
     "pwr.rtc.get": cmd_pwr_rtc_get,

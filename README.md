@@ -1,6 +1,6 @@
 # bt-remote · 香橙派蓝牙管理网关
 
-Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、Netplan WiFi 配置、RTC 设置、mihomo 代理控制、App 内文件管理、交互 root 终端和单次 `term.exec` 命令。
+Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、多无线网卡 Netplan 配置、USB 外设查看、RTC 设置、mihomo 代理控制、App 内文件管理、交互 root 终端和单次 `term.exec` 命令。
 
 原创代码使用 **Apache-2.0**，第三方代码保留原许可证，详见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
@@ -85,7 +85,9 @@ App 概览里的“自定义系统信息”由 `dashboard.html` 的 `CUSTOM_INFO
 
 App 的“文件”页可浏览板端目录、上传、下载、新建目录、重命名、删除空目录或文件，以及预览和编辑小型 UTF-8 文本。传输按 1536 字节分块；上传先写同目录临时文件，SHA256 校验成功后原子替换，断线时清理临时文件。Android 通过系统文件选择器访问手机文件，不申请整个存储空间权限。日志协议和板端 `bt-remote logs` 仍保留，但 App 不显示独立日志选项卡。
 
-WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。默认配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
+“网络”页枚举当前所有接口，并把板载无线和 USB 无线网卡分别标识。选择任意已被内核驱动识别的无线接口后，可用该接口扫描、连接和忘记 WiFi；所选接口会作为独立 Netplan `wifis` 条目写入，不覆盖其它无线接口。“外设”页从 sysfs 读取 USB 型号、VID:PID、速率、驱动及关联的网卡、磁盘和串口。它只查看设备，不提供 USB 断电或卸载操作。
+
+WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。USB 无线网卡仍需系统内核具备对应驱动/固件；若“外设”页可见但没有驱动和网卡名，需先解决板端驱动。默认 Netplan 配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
 
 当前适配单个 `hci0` 控制器，蓝牙驱动/固件需由系统提供。内存上限默认 256 MiB，包含终端启动的子进程；可通过 `systemctl edit bt-gateway` 调整。
 

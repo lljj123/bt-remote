@@ -30,6 +30,10 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 “文件”页替代旧的“日志”页签。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。上传及下载都校验 SHA256；小型 UTF-8 文本可以直接预览和原子保存。
 
+“网络”页通过 `net.ifaces` 枚举全部网卡，可选择板载或 USB 无线接口，再将 `iface` 传给 `net.wifi.status/scan/saved/connect/forget`。“外设”页通过分页的 `device.usb.list` 显示 USB 设备、驱动及其网卡/磁盘/串口节点，不需要 Android USB 权限，因为枚举发生在板端。
+
+终端输出在原生层合帧，进入页面后再按 xterm 写入完成回调逐帧消费，避免大量输出长期占用 WebView 主线程。移动端复制使用“选择”模式拖动后点击“复制”；“全选”和“粘贴”通过 Android `ClipboardManager` 桥接，不依赖 `file://` 页面剪贴板权限。
+
 ## 许可证
 
 项目原创代码为 Apache-2.0；`app/src/main/assets/vendor/` 内 xterm.js 和 fit addon 为 MIT，完整声明随资源打包。

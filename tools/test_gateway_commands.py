@@ -10,6 +10,7 @@ import threading
 import tempfile
 import types
 import unittest
+from unittest import mock
 from urllib.parse import unquote, urlparse
 
 
@@ -151,6 +152,110 @@ class GatewayCommandTests(unittest.TestCase):
     def test_proxy_status_refreshes_delays(self):
         status = GATEWAY.cmd_proxy_status(None, {"refresh": True})
         self.assertEqual([node["delay"] for node in status["nodes"]], [45, 82])
+
+    def test_external_wifi_interface_can_be_selected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            net_root = Path(directory) / "net"
+            adapter = net_root / "wlx001122334455"
+            (adapter / "wireless").mkdir(parents=True)
+            with mock.patch.object(GATEWAY, "SYS_CLASS_NET", str(net_root)), \
+                    mock.patch.object(GATEWAY, "run", return_value=(0, "", "")), \
+                    mock.patch.object(GATEWAY, "wifi_link", return_value={
+                        "ssid": "USB-NET", "bssid": "00:11:22:33:44:55",
+                        "signal_dbm": -48, "freq": 5180}), \
+                    mock.patch.object(GATEWAY, "iface_ipv4", return_value="10.0.0.8"), \
+                    mock.patch.object(GATEWAY, "default_gateway", return_value="10.0.0.1"), \
+                    mock.patch.object(GATEWAY, "netplan_dns", return_value=["1.1.1.1"]):
+                self.assertEqual(GATEWAY.wifi_iface_arg({"iface": adapter.name}), adapter.name)
+                status = GATEWAY.cmd_net_wifi_status(None, {"iface": adapter.name})
+            self.assertEqual(status["iface"], adapter.name)
+            self.assertEqual(status["ssid"], "USB-NET")
+            self.assertEqual(status["ip"], "10.0.0.8")
+
+    def test_netplan_targets_selected_wifi_without_replacing_onboard(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "wifi.yaml"
+            config.write_text(
+                "network:\n  version: 2\n  wifis:\n    wlan0:\n"
+                "      dhcp4: true\n      access-points:\n        onboard:\n"
+                "          password: old-password\n")
+            with mock.patch.object(GATEWAY, "NETPLAN_WIFI", str(config)):
+                GATEWAY._netplan_set_ap("wlx001122334455", "USB-NET", "new-password")
+            data = yaml.safe_load(config.read_text())
+            wifis = data["network"]["wifis"]
+            self.assertIn("onboard", wifis["wlan0"]["access-points"])
+            self.assertEqual(
+                wifis["wlx001122334455"]["access-points"]["USB-NET"]["password"],
+                "new-password")
+            self.assertTrue(wifis["wlx001122334455"]["dhcp4"])
+
+    def test_open_network_connect_uses_selected_external_adapter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            net_root = root / "net"
+            iface = "wlx001122334455"
+            (net_root / iface / "wireless").mkdir(parents=True)
+            config = root / "wifi.yaml"
+            config.write_text("network:\n  version: 2\n  wifis: {}\n")
+            with mock.patch.object(GATEWAY, "SYS_CLASS_NET", str(net_root)), \
+                    mock.patch.object(GATEWAY, "NETPLAN_WIFI", str(config)), \
+                    mock.patch.object(GATEWAY, "BACKUP_ROOT", str(root)), \
+                    mock.patch.object(GATEWAY, "GUARD_FLAG", str(root / "guard")), \
+                    mock.patch.object(GATEWAY, "wireless_ifaces", return_value=[iface]), \
+                    mock.patch.object(GATEWAY, "iface_ipv4", return_value=None), \
+                    mock.patch.object(GATEWAY, "default_gateway", return_value=None), \
+                    mock.patch.object(GATEWAY, "_guard_arm"), \
+                    mock.patch.object(GATEWAY, "_guard_disarm"), \
+                    mock.patch.object(GATEWAY, "_netplan_set_ap") as set_ap, \
+                    mock.patch.object(GATEWAY, "_wifi_ok", return_value=(True, "10.0.0.9")), \
+                    mock.patch.object(GATEWAY, "run", return_value=(0, "", "")):
+                result = GATEWAY.cmd_net_wifi_connect(None, {
+                    "iface": iface, "ssid": "Cafe", "psk": "", "timeout_s": 10})
+            set_ap.assert_called_once_with(iface, "Cafe", None)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["iface"], iface)
+
+    def test_usb_device_inventory_includes_bound_wifi(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            usb_root = root / "usb"
+            net_root = root / "net"
+            block_root = root / "block"
+            tty_root = root / "tty"
+            driver_root = root / "drivers" / "rtl8xxxu"
+            device = usb_root / "1-2"
+            interface_real = device / "interfaces" / "1-2:1.0"
+            interface_real.mkdir(parents=True)
+            driver_root.mkdir(parents=True)
+            net_root.mkdir()
+            block_root.mkdir()
+            tty_root.mkdir()
+            for name, value in {
+                "idVendor": "0bda", "idProduct": "8179", "manufacturer": "Realtek",
+                "product": "802.11n WLAN Adapter", "busnum": "1", "devnum": "4",
+                "speed": "480", "version": "2.00", "bDeviceClass": "00",
+                "authorized": "1",
+            }.items():
+                (device / name).write_text(value)
+            (interface_real / "bInterfaceClass").write_text("ff")
+            (interface_real / "driver").symlink_to(driver_root, target_is_directory=True)
+            (usb_root / "1-2:1.0").symlink_to(interface_real, target_is_directory=True)
+            net_adapter = net_root / "wlx001122334455"
+            net_adapter.mkdir()
+            (net_adapter / "device").symlink_to(interface_real, target_is_directory=True)
+
+            with mock.patch.object(GATEWAY, "SYS_USB_DEVICES", str(usb_root)), \
+                    mock.patch.object(GATEWAY, "SYS_CLASS_NET", str(net_root)), \
+                    mock.patch.object(GATEWAY, "SYS_CLASS_BLOCK", str(block_root)), \
+                    mock.patch.object(GATEWAY, "SYS_CLASS_TTY", str(tty_root)):
+                result = GATEWAY.cmd_device_usb_list(None, {"offset": 0, "limit": 8})
+            self.assertEqual(result["count"], 1)
+            item = result["devices"][0]
+            self.assertEqual(item["vendor_id"], "0bda")
+            self.assertEqual(item["kind"], "network")
+            self.assertEqual(item["drivers"], ["rtl8xxxu"])
+            self.assertEqual(item["net_ifaces"], ["wlx001122334455"])
 
     def test_term_exec_and_caps(self):
         caps = GATEWAY.cmd_term_caps(None, {})
