@@ -1,6 +1,6 @@
 # bt-remote · 香橙派蓝牙管理网关
 
-Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS。支持系统指标、多无线网卡 Netplan 配置、磁盘/U 盘挂载与文件访问、USB 外设查看、RTC 设置、mihomo 订阅与代理控制、App 内文件管理、交互 root 终端和单次 `term.exec` 命令。
+Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS。支持系统指标、多无线网卡 Netplan 配置、磁盘/U 盘挂载与文件访问、USB 外设查看、RTC 设置、mihomo 订阅与代理控制、App 内文件管理、多标签交互 root 终端和单次 `term.exec` 命令。
 
 原创代码使用 **Apache-2.0**，第三方代码保留原许可证，详见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
@@ -34,9 +34,7 @@ sudo bt-remote pair off      # 手机配对完成后关闭窗口
 sudo bt-remote doctor        # 自启、运行状态与本地鉴权探测
 ```
 
-手机系统蓝牙中完成配对，再打开 App 选择该设备并填写令牌。App 与板端需配套使用 `escaped-v1` 终端协议。Android 源码构建方式见 [android/README.md](android/README.md)。
-
-板端另支持可选的 `json-mux-v1`，可在终端运行期间处理卡片请求。当前 App 尚未接入，继续使用旧协议；协议格式、并发限制和接入要求见 [终端并行协议](docs/terminal-json-mux-v1.md)。
+手机系统蓝牙中完成配对，再打开 App 选择该设备并填写令牌。App 使用 `json-mux-v1` 在同一蓝牙连接上同时运行最多 4 个独立 PTY，终端期间卡片和心跳仍可刷新。协议见 [终端并行协议](docs/terminal-json-mux-v1.md)，Android 源码构建方式见 [android/README.md](android/README.md)。
 
 ## 自动启动与守护的边界
 
@@ -88,7 +86,7 @@ App 的“文件”页可浏览板端目录、上传、下载、新建目录、�
 
 “网络”页枚举当前所有接口，并把板载无线和 USB 无线网卡分别标识。选择任意已被内核驱动识别的无线接口后，可用该接口扫描、连接和忘记 WiFi；所选接口会作为独立 Netplan `wifis` 条目写入，不覆盖其它无线接口。“外设”页从 sysfs 读取 USB 型号、VID:PID、速率、驱动及关联的网卡、磁盘和串口。
 
-概览页通过 `lsblk` 显示板载闪存、系统盘、分区和 USB 存储。未挂载且有文件系统的分区可挂载到 `/mnt/bt-remote/`；挂载成功后会出现在“文件”页快捷入口，可浏览、上传、下载和编辑文件。FAT/exFAT 等不支持 POSIX 权限位的文件系统会跳过 `chmod`，仍保留原子替换流程。“服务”页不再列出 systemd 服务，只显示代理和电源/RTC 控制。
+概览页通过 `lsblk` 每块物理存储只显示一项：系统盘、板载闪存和 USB 存储分别选择其主文件系统，不再展开所有分区。未挂载的主文件系统可挂载到 `/mnt/bt-remote/`；挂载后会出现在“文件”页快捷入口。FAT/exFAT 会跳过不支持的 `chmod`，仍保留原子替换流程。“服务”页不再列出 systemd 服务，代理与可折叠的电源/RTC 控制分开显示。App 不再采集或显示进程 Top，顶部始终显示手机→板子上传和板子→手机下载的蓝牙实时速率。
 
 WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。USB 无线网卡仍需系统内核具备对应驱动/固件；若“外设”页可见但没有驱动和网卡名，需先解决板端驱动。默认 Netplan 配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
 

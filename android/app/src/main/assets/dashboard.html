@@ -31,15 +31,19 @@
   header{position:sticky;top:0;z-index:10;background:var(--bg);
     padding:10px 12px 8px;margin:0 -12px 8px;border-bottom:1px solid var(--line)}
   .bar{display:flex;align-items:center;gap:8px}
-  header.conn-collapsed{padding:4px 12px;margin-bottom:4px;border-bottom:none;background:transparent;pointer-events:none}
+  header.conn-collapsed{padding:5px 12px;margin-bottom:4px;background:var(--bg);pointer-events:none}
   header.conn-collapsed .bar{justify-content:flex-end}
-  header.conn-collapsed .bar>:not(#btnFold){display:none}
+  header.conn-collapsed .bar>:not(#btRate):not(#btnFold){display:none}
+  header.conn-collapsed #btRate{display:flex;margin-left:auto;pointer-events:none}
   header.conn-collapsed #btnFold{padding:4px 6px!important;background:var(--panel);pointer-events:auto}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
   .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.18)}
   .dot.busy{background:var(--warn)}
   .dot.err{background:var(--bad)}
   .stat{font-size:12px;color:var(--muted);margin-left:auto}
+  .bt-rate{display:flex;align-items:center;gap:7px;padding:3px 8px;border:1px solid var(--line);
+    border-radius:999px;background:var(--panel);font:10px/1.4 var(--mono);color:var(--muted);white-space:nowrap}
+  .bt-rate .up{color:#93c5fd}.bt-rate .down{color:#86efac}
   .row2{display:flex;gap:8px;margin-top:8px}
   select,input,button{font:inherit;color:var(--text);background:var(--panel2);
     border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
@@ -153,6 +157,7 @@
   #tab-tty.fs .card>h2{display:none!important}
   #termWrap{height:46vh;min-height:240px;max-height:520px;overflow:hidden;
     overscroll-behavior:contain;background:#070a10;border-radius:8px}
+  .term-pane{width:100%;height:100%}.term-pane.hide{display:none}
   #termWrap .xterm-viewport{overscroll-behavior-y:contain;touch-action:pan-y;
     -webkit-overflow-scrolling:touch}
   #termWrap.selecting .xterm-viewport,#termWrap.selecting .xterm-screen{touch-action:none}
@@ -166,6 +171,15 @@
   .term-tools{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
   .term-tools button{flex:1;min-width:64px;padding:6px 8px;font-size:12px}
   .term-tools button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .term-tabs{display:flex;align-items:center;gap:5px;margin:0 0 6px;overflow:hidden}
+  .term-tabs-list{display:flex;gap:5px;overflow-x:auto;flex:1;scrollbar-width:none}
+  .term-tabs-list::-webkit-scrollbar{display:none}
+  .term-tab{display:flex;align-items:center;gap:5px;flex:0 0 auto;padding:4px 7px;font-size:11px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--muted)}
+  .term-tab.active{color:var(--text);border-color:var(--accent);background:rgba(59,130,246,.15)}
+  .term-tab .term-close{border:0;background:transparent;padding:0;color:var(--dim);font-size:14px;line-height:1}
+  .term-tab.running::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ok)}
+  #btnTermAdd{flex:0 0 auto;padding:3px 9px;font-size:16px;line-height:1.2}
 
   /* 折叠卡片 */
   .fold-head{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
@@ -216,6 +230,9 @@
       <span class="dot" id="dot"></span>
       <h1 id="devName">板子遥控</h1>
       <span class="stat" id="stat">未连接</span>
+      <span class="bt-rate" id="btRate" title="手机→板子为上传，板子→手机为下载">
+        <span>BT</span><span class="up" id="btUp">↑ --</span><span class="down" id="btDown">↓ --</span>
+      </span>
       <button id="btnConn" class="pri" style="flex:0 0 auto;padding:6px 14px;margin-left:8px">连接</button>
       <button id="btnFold" class="ghost" style="flex:0 0 auto;padding:6px 8px" aria-label="展开或收起连接配置">
         <svg id="foldIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;display:block;transition:transform .25s"><path d="M6 9l6 6 6-6"/></svg>
@@ -285,13 +302,6 @@
       <div id="storageList"></div>
     </div>
 
-    <div class="card">
-      <h2>进程 Top</h2>
-      <table id="tblTop">
-        <thead><tr><th>进程</th><th class="r">PID</th><th class="r">CPU</th><th class="r">内存</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
   </section>
 
   <!-- 服务 -->
@@ -344,25 +354,26 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>开关机</h2>
-      <div class="note">蓝牙无法给完全断电的板子上电（硬件限制）。这里的关机/重启是软件下发；
-        定时开机由板载 RTC 完成，真正的冷启动需要外接智能插座。</div>
-      <div class="row2"><button class="ghost" id="btnReboot" style="flex:1">重启</button>
-        <button class="danger" id="btnPoweroff" style="flex:1">关机</button></div>
-    </div>
-    <div class="card">
-      <h2>定时唤醒（RTC）</h2>
-      <div class="field"><label>唤醒时间</label>
-        <input id="rtcAt" type="datetime-local"></div>
-      <div class="field"><label>重复</label>
-        <select id="rtcRepeat">
-          <option value="none">仅一次</option>
-          <option value="daily">每天</option>
-        </select></div>
-      <div class="row2">
-        <button class="ghost" id="btnRtcGet" style="flex:1">读取当前</button>
-        <button class="pri" id="btnRtcSet" style="flex:1">设置</button>
+    <div class="card fold collapsed" id="foldPower">
+      <div class="fold-head">
+        <h2>电源与定时唤醒</h2>
+        <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="fold-body">
+        <div class="note">蓝牙无法给完全断电的板子上电。RTC 可定时唤醒已关机但仍有电的板子。</div>
+        <div class="row2" style="margin:0 0 12px"><button class="ghost" id="btnReboot" style="flex:1">重启</button>
+          <button class="danger" id="btnPoweroff" style="flex:1">关机</button></div>
+        <div class="field"><label>唤醒时间</label>
+          <input id="rtcAt" type="datetime-local"></div>
+        <div class="field"><label>重复</label>
+          <select id="rtcRepeat">
+            <option value="none">仅一次</option>
+            <option value="daily">每天</option>
+          </select></div>
+        <div class="row2">
+          <button class="ghost" id="btnRtcGet" style="flex:1">读取当前</button>
+          <button class="pri" id="btnRtcSet" style="flex:1">设置</button>
+        </div>
       </div>
     </div>
   </section>
@@ -473,6 +484,8 @@
       <!-- 真 Shell：板端 PTY（root bash）+ xterm.js -->
       <div id="ttyShellWrap">
         <div class="note warn hide" id="shNote"></div>
+        <div class="term-tabs"><div class="term-tabs-list" id="termTabs"></div>
+          <button class="ghost" id="btnTermAdd" title="新建终端">+</button></div>
         <div id="termWrap"></div>
         <div class="kb" id="kbBar"></div>
         <div class="term-tools">
@@ -606,7 +619,7 @@ if (isNative) {
   else if (token && AndroidBt.setToken(token)) localStorage.removeItem("btr.token");
 }
 let connected = false, connecting = false, authed = false, devLabel = "板子遥控";
-let termProtocol = "", shellStarting = false, streamEpoch = 0;
+let termProtocol = "", termProtocols = [], shellStarting = false, streamEpoch = 0;
 let pollTimer = null, infoTimer = null, subOk = false;
 let wantConnected = false, retryTimer = null, retryStep = 0;
 let following = false, followUnit = "";
@@ -709,7 +722,7 @@ let nextId = 1;
 const pending = new Map();
 
 function raw(line) {
-  if (rawOn || shellStarting) throw new Error("终端正在占用连接，请先结束会话");
+  if (rawOn) throw new Error("旧版终端正在占用连接，请先结束会话");
   if (native.send(line) === false) throw new Error("发送失败，连接不可用或协议忙碌");
 }
 
@@ -719,6 +732,7 @@ function feed(line) {
 
   if (m.t === "hello") {
     termProtocol = m.term_protocol || "";
+    termProtocols = Array.isArray(m.term_protocols) ? m.term_protocols.slice() : [termProtocol];
     devLabel = m.name || m.dev || "板子";
     $("#devName").textContent = devLabel;
     if (!token) {
@@ -783,7 +797,6 @@ function send(name, args, timeoutMs) {
     pending.set(id, { res: res, rej: rej });
     try {
       raw(JSON.stringify({ t: "cmd", id: id, name: name, args: args || {} }));
-      if (name === "term.shell") shellStarting = true;
     } catch (e) { pending.delete(id); rej(e); return; }
     setTimeout(() => {
       if (pending.has(id)) { pending.delete(id); rej(new Error("请求超时")); }
@@ -801,22 +814,8 @@ function onEvent(m) {
   if (m.name === "alert") { toast("[" + m.data.level + "] " + m.data.msg); return; }
   if (m.name === "svc") return;
   if (m.name === "log") { appendLog(m.data); return; }
-  /* 板端已 fork 出 PTY 并切到裸字节相位，之后所有字节都直接进终端 */
-  if (m.name === "term.ready") {
-    shellStarting = false;
-    stopStream();
-    rawOn = true;
-    ttyState(authed ? "已就绪" : "已就绪");
-    shNote("");
-    paintShellBtns();
-    if (termInited) { try { term.focus(); } catch (e) { } }
-    return;
-  }
-  if (m.name === "term.exit") {
-    resetShell();
-    ttyState("会话已结束");
-    if (connected && authed) startStream();
-    return;
+  if (m.name === "term.ready" || m.name === "term.output" || m.name === "term.exit") {
+    handleTermEvent(m.name, m.data || {}); return;
   }
 }
 
@@ -824,7 +823,7 @@ function onEvent(m) {
 async function startStream() {
   stopStream();
   const epoch = streamEpoch;
-  if (rawOn || shellStarting || !authed) return;
+  if (rawOn || !authed) return;
   subOk = false;
   try {
     await send("sys.subscribe", { interval_s: 2, what: ["metrics", "alerts"] });
@@ -833,14 +832,14 @@ async function startStream() {
     subOk = false;
     toast("板端不支持订阅，改用轮询");
   }
-  if (epoch !== streamEpoch || rawOn || shellStarting || !authed) return;
+  if (epoch !== streamEpoch || rawOn || !authed) return;
   pollTimer = setInterval(() => {
-    if (!subOk && connected && authed && !rawOn && !shellStarting) {
+    if (!subOk && connected && authed && !rawOn) {
       send("sys.metrics").then(renderMetrics).catch(() => {});
     }
   }, 2000);
   infoTimer = setInterval(() => {
-    if (connected && authed && !rawOn && !shellStarting) {
+    if (connected && authed && !rawOn) {
       send("dev.ping").catch(() => {});
       if (Date.now() - devInfoAt >= 60000) loadSysInfo();
     }
@@ -1040,6 +1039,20 @@ async function loadSysInfo() {
     $("#iModel").textContent = devInfo.model || "--";
   } catch (e) { }
 }
+function fmtRate(bytes) { return fmtBytes(bytes) + "/s"; }
+
+function paintBtTraffic(up, down) {
+  const rate = value => value == null ? "--" : fmtRate(Math.max(0, Number(value) || 0));
+  $("#btUp").textContent = "↑ " + rate(up);
+  $("#btDown").textContent = "↓ " + rate(down);
+}
+
+window.onBtTraffic = function (payload) {
+  let data = payload;
+  try { if (typeof data === "string") data = JSON.parse(data); } catch (e) { return; }
+  if (!data) return;
+  paintBtTraffic(data.up_bps, data.down_bps);
+};
 
 function uptimeSec() {
   if (!devInfo) return null;
@@ -1108,15 +1121,6 @@ function renderMetrics(d) {
   const upSec = uptimeSec();
   $("#iUp").textContent = upSec == null ? "--" : up(upSec);
 
-  const tb = $("#tblTop").querySelector("tbody");
-  tb.innerHTML = "";
-  (d.top || []).slice(0, 8).forEach(p => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = "<td>" + esc(p.name) + "</td><td class='r muted'>" + Math.round(p.pid) +
-      "</td><td class='r'>" + (p.cpu_pct || 0).toFixed(1) + "%</td><td class='r muted'>" +
-      (p.mem_pct || 0).toFixed(1) + "%</td>";
-    tb.appendChild(tr);
-  });
 }
 
 function push(a, v) { a.push(v); if (a.length > 60) a.shift(); }
@@ -1266,7 +1270,8 @@ function renderProxySubscriptions() {
 
 async function loadProxySubscriptions() {
   if (!authed && isNative) return;
-  proxySubError = "";
+    proxySubError = "";
+    paintBtTraffic(null, null);
   if (!isNative) {
     proxySubscriptions = { items: [{ id: "demo00000001", name: "演示订阅", url_hint: "example.com/sub?…" }],
       active_id: "demo00000001", config_ready: true, config_path: "/etc/mihomo/config.yaml" };
@@ -1599,12 +1604,12 @@ $("#btnUsbMore").onclick = () => loadUsbDevices(false);
 let storageRows = [], storageBusy = false;
 
 function storageTitle(item) {
-  const label = item.label || item.model || item.name || item.path;
-  return (item.type === "disk" ? "磁盘 · " : "分区 · ") + label;
+  return item.model || item.label || item.name || item.disk_path || item.path;
 }
 
 function storageDetail(item) {
   const parts = [fmtBytes(item.size_bytes)];
+  if (item.volume_name && item.path !== item.disk_path) parts.push("主分区 " + item.volume_name);
   if (item.fstype) parts.push(item.fstype);
   if (item.mountpoint) {
     parts.push(item.mountpoint);
@@ -1645,7 +1650,7 @@ function renderStorage() {
   storageRows.forEach(item => {
     const div = document.createElement("div");
     div.className = "iface";
-    const icon = item.external ? "USB" : (item.type === "disk" ? "DISK" : "VOL");
+    const icon = item.external ? "USB" : "DISK";
     div.innerHTML =
       "<div class='ic mono' style='font-size:9px'>" + icon + "</div>" +
       "<div class='bd'><div class='nm'>" + esc(storageTitle(item)) + "</div>" +
@@ -1699,7 +1704,7 @@ async function loadStorage(force) {
       offset = next;
     }
     storageRows = rows;
-    $("#storageState").textContent = "已发现 " + total + " 个磁盘或分区";
+    $("#storageState").textContent = "已发现 " + storageRows.length + " 块存储设备";
     renderStorage();
   } catch (e) {
     $("#storageState").textContent = "读取失败：" + e.message;
@@ -2216,16 +2221,16 @@ async function loadOverview() {
 }
 
 /* ============ 终端 ============ */
-/* 两种视图：
-     shell —— 真终端。板端 fork 一个 PTY 跑 root bash，链路切换成裸字节流，屏上用 xterm.js 渲染。
-              SSH 上去什么体验，这里就是什么体验（颜色、光标、vim/top 这类全屏程序都能跑）。
-     proto —— 协议台。直接收发 NDJSON 帧，调板端命令、排查协议用。 */
+/* Shell 使用 json-mux-v1：同一蓝牙连接内可同时运行多个独立 PTY。 */
 let ttyKind = "shell";
-let rawOn = false;                 // 是否已进入裸字节相位
+let rawOn = false;                 // 仅保留旧版 escaped-v1 断线兼容
 function resetShell() {
   rawOn = false;
+  terminalTabs.forEach(tab => {
+    tab.sid = null; tab.state = "idle"; tab.removeAfterExit = false;
+    tab.inputTail = Promise.resolve(); resetTermWriteQueue(tab);
+  });
   shellStarting = false;
-  resetTermWriteQueue();
   setTermSelectMode(false);
   if (termInited && term) term.clearSelection();
   sticky = null;
@@ -2234,7 +2239,7 @@ function resetShell() {
   ttyState("未启动");
 }
 let term = null, fitAddon = null, termInited = false;
-let termWriteQueue = [], termWriteBusy = false, termWriteEpoch = 0;
+let terminalTabs = [], activeTermKey = "", terminalCounter = 0, termTouchBound = false;
 let termSelectMode = false, termSelectAnchor = null;
 const TERM_RENDER_CHUNK = 16384;
 let sticky = null;                 // 粘滞修饰键：null | ctrl | alt
@@ -2261,19 +2266,16 @@ function b64ToU8(b64) {
   return u8;
 }
 
-/* 裸相位下 0x01 是控制帧前缀，普通数据里的 0x01 必须写成 0x01 0x01 */
 function shellSend(u8) {
-  if (!rawOn) return;
-  if (!isNative) { demoSend(u8); return; }
-  let n = 0;
-  for (let i = 0; i < u8.length; i++) if (u8[i] === 1) n++;
-  if (n) {
-    const o = new Uint8Array(u8.length + n);
-    let k = 0;
-    for (let i = 0; i < u8.length; i++) { o[k++] = u8[i]; if (u8[i] === 1) o[k++] = 1; }
-    u8 = o;
+  const tab = activeTerminalTab();
+  if (!tab || tab.state !== "running" || !tab.sid) return;
+  if (!isNative) { demoSend(u8, tab); return; }
+  for (let offset = 0; offset < u8.length; offset += 1536) {
+    const chunk = u8.slice(offset, Math.min(offset + 1536, u8.length));
+    tab.inputTail = tab.inputTail.then(() =>
+      send("term.input", { sid: tab.sid, b64: u8ToB64(chunk) }, 20000)
+    ).catch(e => { toast("终端输入失败：" + e.message); });
   }
-  native.sendRaw(u8ToB64(u8));
 }
 function shellSendText(t) {
   const bytes = new TextEncoder().encode(t);
@@ -2283,16 +2285,44 @@ function shellSendText(t) {
   }
 }
 
-/* ---- xterm 实例延迟创建：页签隐藏时容器尺寸为 0，量不出行列 ---- */
-function initTerm() {
-  if (termInited) return;
-  /* 容器隐藏在 display:none 下尺寸是 0，xterm 量不出字体；等页签真正打开再建 */
+function activeTerminalTab() { return terminalTabs.find(tab => tab.key === activeTermKey) || null; }
+function terminalBySid(sid) { return terminalTabs.find(tab => tab.sid === sid) || null; }
+
+function renderTerminalTabs() {
+  const box = $("#termTabs");
+  box.innerHTML = "";
+  terminalTabs.forEach(tab => {
+    const button = document.createElement("button");
+    button.className = "term-tab" + (tab.key === activeTermKey ? " active" : "") +
+      (tab.state === "running" ? " running" : "");
+    const label = document.createElement("span");
+    label.textContent = tab.title;
+    const close = document.createElement("span");
+    close.className = "term-close"; close.textContent = "×";
+    close.onclick = event => { event.stopPropagation(); removeTerminalTab(tab); };
+    button.appendChild(label); button.appendChild(close);
+    button.onclick = () => switchTerminalTab(tab.key);
+    box.appendChild(button);
+  });
+  $("#btnTermAdd").disabled = terminalTabs.length >= 4;
+}
+
+function createTerminalTab(startNow) {
+  if (terminalTabs.length >= 4) { toast("最多同时打开 4 个终端"); return null; }
   if ($("#tab-tty").classList.contains("hide")) return;
   if (typeof Terminal === "undefined") {
     shNote("xterm.js 没加载成功（assets/vendor 缺文件），请用协议台。");
     return;
   }
-  term = new Terminal({
+  const tab = { key: "term-" + (++terminalCounter), title: "终端 " + terminalCounter,
+    sid: null, state: "idle", writeQueue: [], writeBusy: false, writeEpoch: 0,
+    inputTail: Promise.resolve(), removeAfterExit: false, demoLine: "" };
+  const pane = document.createElement("div");
+  pane.className = "term-pane";
+  pane.dataset.termKey = tab.key;
+  $("#termWrap").appendChild(pane);
+  tab.pane = pane;
+  tab.term = new Terminal({
     fontFamily: 'ui-monospace, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace',
     fontSize: 12.5, lineHeight: 1.15, cursorBlink: true, scrollback: 2000,
     smoothScrollDuration: 0, scrollSensitivity: 1,
@@ -2303,48 +2333,130 @@ function initTerm() {
       blue: "#3b82f6", magenta: "#a855f7", cyan: "#06b6d4", white: "#e6edf6"
     }
   });
-  fitAddon = new FitAddon.FitAddon();
-  term.loadAddon(fitAddon);
-  term.open($("#termWrap"));
-  term.onData(onTermData);
-  term.onResize(({ cols, rows }) => { if (rawOn && isNative) native.sendResize(cols, rows); });
-  term.onSelectionChange(paintTermSelection);
-  bindTermTouchSelection();
+  tab.fit = new FitAddon.FitAddon();
+  tab.term.loadAddon(tab.fit);
+  tab.term.open(pane);
+  tab.term.onData(data => onTermData(tab, data));
+  tab.term.onResize(({ cols, rows }) => {
+    if (tab.state === "running" && tab.sid && isNative)
+      send("term.resize", { sid: tab.sid, cols: cols, rows: rows }).catch(() => {});
+  });
+  tab.term.onSelectionChange(paintTermSelection);
+  terminalTabs.push(tab);
+  activeTermKey = tab.key;
   termInited = true;
-  buildKb();
+  if (!termTouchBound) { bindTermTouchSelection(); termTouchBound = true; buildKb(); }
+  switchTerminalTab(tab.key);
   fitTerm();
-  term.writeln("\x1b[2m板子遥控 · 蓝牙 Shell\x1b[0m");
-  term.writeln("\x1b[2m先在顶部连接并鉴权，再点「启动 Shell 会话」。\x1b[0m");
+  tab.term.writeln("\x1b[2m板子遥控 · 蓝牙 Shell\x1b[0m");
+  tab.term.writeln("\x1b[2m每个选项卡是一个独立 PTY，最多同时 4 个。\x1b[0m");
+  renderTerminalTabs();
+  if (startNow) openShell(tab);
+  return tab;
+}
+
+function initTerm() {
+  if (!termInited) createTerminalTab(false);
+}
+
+function switchTerminalTab(key) {
+  const tab = terminalTabs.find(item => item.key === key);
+  if (!tab) return;
+  activeTermKey = key; term = tab.term; fitAddon = tab.fit;
+  terminalTabs.forEach(item => item.pane.classList.toggle("hide", item !== tab));
+  setTermSelectMode(false); clearSticky(); renderTerminalTabs(); paintShellBtns();
+  ttyState(tab.state === "running" ? "已就绪" : tab.state === "starting" ? "建立中…" :
+    tab.state === "closing" ? "正在结束…" : "未启动");
+  setTimeout(() => { fitTerm(); try { tab.term.focus(); } catch (e) { } }, 30);
+}
+
+function removeTerminalTab(tab) {
+  if (!tab) return;
+  if (!isNative) { finalizeTerminalTab(tab); return; }
+  if (tab.state === "starting" && !tab.sid) {
+    tab.removeAfterExit = true;
+    renderTerminalTabs(); toast("终端建立后会立即关闭"); return;
+  }
+  if ((tab.state === "running" || tab.state === "starting") && tab.sid) {
+    tab.removeAfterExit = true; tab.state = "closing";
+    send("term.close", { sid: tab.sid }).catch(e => {
+      tab.removeAfterExit = false; tab.state = "running";
+      renderTerminalTabs(); paintShellBtns(); toast("关闭失败：" + e.message);
+    });
+    renderTerminalTabs(); paintShellBtns(); return;
+  }
+  finalizeTerminalTab(tab);
+}
+
+function finalizeTerminalTab(tab) {
+  const wasActive = activeTermKey === tab.key;
+  terminalTabs = terminalTabs.filter(item => item !== tab);
+  try { tab.term.dispose(); } catch (e) { }
+  try { tab.pane.remove(); } catch (e) { }
+  if (wasActive) activeTermKey = terminalTabs.length ? terminalTabs[terminalTabs.length - 1].key : "";
+  termInited = terminalTabs.length > 0;
+  if (termInited) switchTerminalTab(activeTermKey);
+  else { term = null; fitAddon = null; ttyState("未启动"); renderTerminalTabs(); paintShellBtns(); }
 }
 
 /* 输出分块排队：上一块解析/绘制完成后，下一块才在后续动画帧进入 xterm。 */
-function resetTermWriteQueue() {
-  termWriteEpoch++;
-  termWriteQueue = [];
-  termWriteBusy = false;
+function resetTermWriteQueue(tab) {
+  if (!tab) return;
+  tab.writeEpoch++;
+  tab.writeQueue = [];
+  tab.writeBusy = false;
 }
-function queueTermWrite(bytes) {
+function queueTermWrite(bytes, tab) {
+  tab = tab || activeTerminalTab();
+  if (!tab) return;
   for (let offset = 0; offset < bytes.length; offset += TERM_RENDER_CHUNK) {
-    termWriteQueue.push(bytes.slice(offset, Math.min(offset + TERM_RENDER_CHUNK, bytes.length)));
+    tab.writeQueue.push(bytes.slice(offset, Math.min(offset + TERM_RENDER_CHUNK, bytes.length)));
   }
-  drainTermWriteQueue();
+  drainTermWriteQueue(tab);
 }
-function drainTermWriteQueue() {
-  if (!termInited || !term || termWriteBusy || !termWriteQueue.length) return;
-  const chunk = termWriteQueue.shift();
-  const epoch = termWriteEpoch;
-  termWriteBusy = true;
+function drainTermWriteQueue(tab) {
+  if (!tab || tab.writeBusy || !tab.writeQueue.length) return;
+  const chunk = tab.writeQueue.shift();
+  const epoch = tab.writeEpoch;
+  tab.writeBusy = true;
   try {
-    term.write(chunk, () => {
-      if (epoch !== termWriteEpoch) return;
-      termWriteBusy = false;
-      if (termWriteQueue.length) requestAnimationFrame(drainTermWriteQueue);
+    tab.term.write(chunk, () => {
+      if (epoch !== tab.writeEpoch) return;
+      tab.writeBusy = false;
+      if (tab.writeQueue.length) requestAnimationFrame(() => drainTermWriteQueue(tab));
     });
   } catch (e) {
-    if (epoch !== termWriteEpoch) return;
-    termWriteBusy = false;
-    if (termWriteQueue.length) requestAnimationFrame(drainTermWriteQueue);
+    if (epoch !== tab.writeEpoch) return;
+    tab.writeBusy = false;
+    if (tab.writeQueue.length) requestAnimationFrame(() => drainTermWriteQueue(tab));
   }
+}
+
+function handleTermEvent(name, data) {
+  let tab = terminalBySid(data.sid);
+  if (!tab && name === "term.ready") {
+    tab = terminalTabs.find(item => item.state === "starting" && !item.sid) || null;
+    if (tab) tab.sid = data.sid || null;
+  }
+  if (!tab) return;
+  if (name === "term.ready") {
+    tab.state = "running";
+    shellStarting = terminalTabs.some(item => item.state === "starting");
+    shNote("");
+    if (tab.key === activeTermKey) {
+      ttyState("已就绪");
+      try { tab.term.focus(); } catch (e) { }
+    }
+  } else if (name === "term.output") {
+    try { queueTermWrite(b64ToU8(data.b64 || ""), tab); } catch (e) { }
+  } else if (name === "term.exit") {
+    const remove = tab.removeAfterExit;
+    tab.state = "idle"; tab.sid = null; tab.removeAfterExit = false;
+    tab.term.writeln("\r\n\x1b[2m[会话已结束，退出码 " + Number(data.code || 0) + "]\x1b[0m");
+    if (remove) { finalizeTerminalTab(tab); return; }
+    if (tab.key === activeTermKey) ttyState("会话已结束");
+  }
+  renderTerminalTabs(); paintShellBtns();
 }
 
 function paintTermSelection() {
@@ -2437,7 +2549,8 @@ $("#btnTermCopy").onclick = async () => {
   if (ok) setTermSelectMode(false);
 };
 $("#btnTermPaste").onclick = async () => {
-  if (!rawOn || !termInited || !term) { toast("请先启动 Shell 会话"); return; }
+  const tab = activeTerminalTab();
+  if (!tab || tab.state !== "running" || !term) { toast("请先启动 Shell 会话"); return; }
   const text = await readClipboardText();
   if (!text) { toast("剪贴板没有文本"); return; }
   clearSticky(); setTermSelectMode(false); term.clearSelection();
@@ -2446,7 +2559,8 @@ $("#btnTermPaste").onclick = async () => {
 };
 
 /* 键盘输入 -> PTY。粘滞 CTRL/ALT 在这里生效（软键盘发不出这些组合键） */
-function onTermData(d) {
+function onTermData(sourceTab, d) {
+  if (!sourceTab || sourceTab.key !== activeTermKey || sourceTab.state !== "running") return;
   let out = d;
   if (sticky) {
     out = "";
@@ -2498,7 +2612,8 @@ function buildKb() {
         toast(sticky ? (k.t + " 已锁定：再按一个键生效，再点一次取消") : "已取消修饰键");
         return;
       }
-      if (!rawOn) { toast("先点「启动 Shell 会话」"); return; }
+      const tab = activeTerminalTab();
+      if (!tab || tab.state !== "running") { toast("先点「启动 Shell 会话」"); return; }
       shellSendText(k.s);
       try { term.focus(); } catch (e) { }
     };
@@ -2514,7 +2629,8 @@ function paintSticky() {
 function clearSticky() { sticky = null; paintSticky(); }
 
 function fitTerm() {
-  if (!termInited || !fitAddon) return;
+  const tab = activeTerminalTab();
+  if (!termInited || !tab || !fitAddon) return;
   if ($("#tab-tty").classList.contains("hide")) return;
   try { fitAddon.fit(); } catch (e) { }
 }
@@ -2534,60 +2650,74 @@ function shNote(text) {
 function ttyState(text) { $("#ttyState").textContent = text; }
 
 function paintShellBtns() {
+  const tab = activeTerminalTab();
   const b = $("#btnShStart");
-  b.disabled = rawOn || shellStarting;
-  b.textContent = rawOn ? "会话进行中" : "启动 Shell 会话";
-  $("#btnShClose").disabled = !rawOn;
+  const active = tab && (tab.state === "running" || tab.state === "starting" || tab.state === "closing");
+  b.disabled = !tab || active;
+  b.textContent = tab && tab.state === "running" ? "会话进行中" :
+    tab && tab.state === "starting" ? "正在启动…" : "启动 Shell 会话";
+  $("#btnShClose").disabled = !tab || tab.state !== "running";
 }
 
-async function openShell() {
-  if (rawOn || shellStarting) { toast("会话已在进行中或正在启动"); return; }
-  if (!isNative) { demoShellOpen(); return; }
+async function openShell(targetTab) {
+  const tab = targetTab || activeTerminalTab();
+  if (!tab) { initTerm(); return; }
+  if (tab.state === "running" || tab.state === "starting" || tab.state === "closing") {
+    toast("该终端会话已在运行"); return;
+  }
+  if (!isNative) { demoShellOpen(tab); return; }
   if (!authed) { toast("请先连接并鉴权"); return; }
-  if (termProtocol !== "escaped-v1") { toast("请先更新板端网关，再使用终端"); return; }
-  if (pending.size) { toast("请等待当前管理请求完成后再启动终端"); return; }
-  stopStream();
-  fitTerm();
-  const cols = Math.max(20, (term && term.cols) || 80);
-  const rows = Math.max(5, (term && term.rows) || 24);
+  if (!termProtocols.includes("json-mux-v1")) { toast("多终端需要更新 v14 网关"); return; }
+  switchTerminalTab(tab.key); fitTerm();
+  const cols = Math.max(20, tab.term.cols || 80);
+  const rows = Math.max(5, tab.term.rows || 24);
   shNote("");
+  tab.state = "starting"; shellStarting = true;
   ttyState("建立中…");
+  paintShellBtns(); renderTerminalTabs();
   try {
-    await send("term.shell", { cols: cols, rows: rows, term: "xterm-256color", shell: "/bin/bash", protocol: "escaped-v1" }, 20000);
-    if (!rawOn) ttyState("正在接管…");
+    const result = await send("term.shell", { cols: cols, rows: rows, term: "xterm-256color",
+      shell: "/bin/bash", protocol: "json-mux-v1" }, 20000);
+    tab.sid = result.sid || null;
+    if (!tab.sid) throw new Error("板端没有返回终端会话 ID");
+    if (tab.removeAfterExit) {
+      tab.state = "closing";
+      send("term.close", { sid: tab.sid }).catch(e => {
+        tab.removeAfterExit = false; tab.state = "running";
+        renderTerminalTabs(); paintShellBtns(); toast("关闭失败：" + e.message);
+      });
+    } else if (tab.state === "starting") ttyState("正在接管…");
   } catch (e) {
-    shellStarting = false;
-    // A timeout leaves the peer's phase unknown; rebuild a clean connection.
-    if (String(e.message).includes("请求超时")) {
-      native.disconnect(); onState("disconnected", "");
-    } else if (connected && authed) startStream();
+    tab.state = "idle"; tab.sid = null;
     ttyState("未启动");
     const m = String(e.message || "");
-    if (m.indexOf("E_NOCMD") >= 0) {
-      shNote("板端还没实现 term.shell（原始 PTY 通道），Shell 视图暂时用不了。"
-        + "把 bt-remote\\提示词-板端加raw-pty终端.md 交给板子 agent 补上，重连后即可用。"
-        + "（右上角「协议台」现在就能用。）");
-    } else if (m.indexOf("E_BUSY") >= 0) {
-      shNote("板端已经有一个终端会话在跑（E_BUSY），等它结束再试。");
-    } else {
-      shNote("启动失败：" + m);
-    }
+    shNote("启动失败：" + m);
+    if (tab.removeAfterExit) { finalizeTerminalTab(tab); return; }
   }
+  shellStarting = terminalTabs.some(item => item.state === "starting");
   paintShellBtns();
+  renderTerminalTabs();
 }
 
 function closeShell() {
-  if (!rawOn) { toast("当前没有会话"); return; }
-  if (isNative) native.sendClose();
-  else shellSendText("exit\n");
+  const tab = activeTerminalTab();
+  if (!tab || tab.state !== "running" || !tab.sid) { toast("当前没有会话"); return; }
+  if (!isNative) { demoSend(new TextEncoder().encode("exit\n"), tab); return; }
+  tab.state = "closing"; paintShellBtns(); renderTerminalTabs();
+  send("term.close", { sid: tab.sid }).catch(e => {
+    tab.state = "running"; paintShellBtns(); renderTerminalTabs(); toast("结束失败：" + e.message);
+  });
   toast("已请求结束会话");
 }
 
-$("#btnShStart").onclick = openShell;
+$("#btnShStart").onclick = () => openShell();
 $("#btnShClose").onclick = closeShell;
+$("#btnTermAdd").onclick = () => createTerminalTab(true);
 $("#btnShFit").onclick = () => {
   fitTerm();
-  if (rawOn && isNative && term) native.sendResize(term.cols, term.rows);
+  const tab = activeTerminalTab();
+  if (tab && tab.state === "running" && tab.sid && isNative && term)
+    send("term.resize", { sid: tab.sid, cols: term.cols, rows: term.rows }).catch(() => {});
   toast("已适配到 " + (term ? term.cols + "×" + term.rows : "--"));
 };
 
@@ -2840,17 +2970,13 @@ function startDemo() {
         product: "Ultra", speed_mbps: 5000, kind: "storage", drivers: ["usb-storage"],
         net_ifaces: [], block_devices: ["sda"], tty_devices: [], authorized: true }
     ] });
-    if (m.name === "storage.list") return ok({ count: 5, next_offset: 5, eof: true, devices: [
-      { name: "mmcblk0p2", path: "/dev/mmcblk0p2", type: "part", parent: "/dev/mmcblk0",
+    if (m.name === "storage.list") return ok({ count: 3, next_offset: 3, eof: true, devices: [
+      { name: "mmcblk0", disk_path: "/dev/mmcblk0", volume_name: "mmcblk0p2", path: "/dev/mmcblk0p2", type: "disk", parent: "",
         size_bytes: 31900000000, fstype: "ext4", label: "system", mountpoint: "/", total_bytes: 30400000000,
         used_bytes: 22000000000, external: false, model: "SD Card", can_mount: false, managed_mount: false },
-      { name: "mmcblk2", path: "/dev/mmcblk2", type: "disk", parent: "", size_bytes: 8000000000,
-        fstype: "", label: "", mountpoint: "", external: false, model: "8GB eMMC", can_mount: false, managed_mount: false },
-      { name: "mmcblk2p1", path: "/dev/mmcblk2p1", type: "part", parent: "/dev/mmcblk2", size_bytes: 7900000000,
+      { name: "mmcblk2", disk_path: "/dev/mmcblk2", volume_name: "mmcblk2p1", path: "/dev/mmcblk2p1", type: "disk", parent: "", size_bytes: 8000000000,
         fstype: "ext4", label: "EMMC", mountpoint: "", external: false, model: "8GB eMMC", can_mount: true, managed_mount: false },
-      { name: "sda", path: "/dev/sda", type: "disk", parent: "", size_bytes: 64000000000,
-        fstype: "", label: "", mountpoint: "", external: true, model: "SanDisk Ultra", can_mount: false, managed_mount: false },
-      { name: "sda1", path: "/dev/sda1", type: "part", parent: "/dev/sda", size_bytes: 63900000000,
+      { name: "sda", disk_path: "/dev/sda", volume_name: "sda1", path: "/dev/sda1", type: "disk", parent: "", size_bytes: 64000000000,
         fstype: "exfat", label: "U盘", mountpoint: "/mnt/bt-remote/sda1", total_bytes: 63900000000,
         used_bytes: 12000000000, external: true, model: "SanDisk Ultra", can_mount: false, managed_mount: true }
     ] });
@@ -2898,10 +3024,12 @@ function startDemo() {
         truncated: false, timed_out: false, duration_ms: 12 });
     }
     if (m.name === "term.shell") {
-      ok({ pid: 4242, user: "root", shell: "/bin/bash", cols: m.args.cols, rows: m.args.rows });
+      const sid = "demo-" + Math.random().toString(16).slice(2);
+      ok({ pid: 4242, user: "root", shell: "/bin/bash", cols: m.args.cols, rows: m.args.rows,
+        sid: sid, protocol: "json-mux-v1" });
       setTimeout(() => {
-        feed(JSON.stringify({ t: "ev", name: "term.ready", data: { cols: m.args.cols, rows: m.args.rows } }));
-        demoStartPty();
+        feed(JSON.stringify({ t: "ev", name: "term.ready", data: { sid: sid, protocol: "json-mux-v1",
+          cols: m.args.cols, rows: m.args.rows } }));
       }, 90);
       return;
     }
@@ -2922,12 +3050,6 @@ return ok({});
         end0: { state: "no-carrier", rx_bps: 0, tx_bps: 0 },
         wlx801f028e3491: { state: "down", rx_bps: 0, tx_bps: 0 }
       },
-      top: [
-        { pid: 1234, name: "codebuddy", cpu_pct: 12.4, mem_pct: 13.1 },
-        { pid: 908, name: "node", cpu_pct: 4.2, mem_pct: 6.8 },
-        { pid: 421, name: "bluetoothd", cpu_pct: 0.7, mem_pct: 1.2 },
-        { pid: 77, name: "systemd-networkd", cpu_pct: 0.3, mem_pct: 0.9 }
-      ]
     };
   }
 
@@ -2938,7 +3060,9 @@ return ok({});
   native.enabled = () => true;
   loadDevices();
 
-  feed(JSON.stringify({ t: "hello", ver: 1, dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required" }));
+  setInterval(() => paintBtTraffic(800 + Math.random() * 5000, 4000 + Math.random() * 18000), 1000);
+  feed(JSON.stringify({ t: "hello", ver: 1, dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required",
+    term_protocol: "escaped-v1", term_protocols: ["escaped-v1", "json-mux-v1"] }));
 }
 
 /* ---------- 演示模式的假 PTY：让浏览器里也能看到真终端长什么样 ---------- */
@@ -2983,52 +3107,53 @@ const DEMO_CMDS = {
   htop: DEMO_TOP
 };
 
-function demoWrite(s) { try { term.write(new TextEncoder().encode(s)); } catch (e) { } }
-function demoPrompt() { demoWrite("\x1b[32mroot@orangepi3-lts\x1b[0m:\x1b[34m/root\x1b[0m# "); }
+function demoWrite(s, tab) { try { (tab || activeTerminalTab()).term.write(new TextEncoder().encode(s)); } catch (e) { } }
+function demoPrompt(tab) { demoWrite("\x1b[32mroot@orangepi3-lts\x1b[0m:\x1b[34m/root\x1b[0m# ", tab); }
 
-let demoLine = "";
-
-function demoStartPty() {
-  initTerm();
+function demoStartPty(tab) {
+  tab = tab || activeTerminalTab();
+  if (!tab) return;
+  tab.sid = "demo-" + tab.key; tab.state = "running";
   ttyState("已就绪（演示）");
   shNote("");
-  paintShellBtns();
-  if (!termInited) return;
-  demoWrite("\x1b[2m[演示模式] 没有真蓝牙链路，下面是本地假 PTY，只用来预览界面。\x1b[0m\r\n");
-  demoWrite("Welcome to Parrot Security 7.3 (GNU/Linux 6.18.44 aarch64)\r\n\r\n");
-  demoPrompt();
+  paintShellBtns(); renderTerminalTabs();
+  demoWrite("\x1b[2m[演示模式] 没有真蓝牙链路，下面是本地假 PTY，只用来预览界面。\x1b[0m\r\n", tab);
+  demoWrite("Welcome to Parrot Security 7.3 (GNU/Linux 6.18.44 aarch64)\r\n\r\n", tab);
+  demoPrompt(tab);
 }
 
-function demoShellOpen() { demoStartPty(); }
+function demoShellOpen(tab) { demoStartPty(tab); }
 
 /** 演示模式下的假 PTY：把按键当真 bash 处理（回显、退格、Ctrl-C、内建命令） */
-function demoSend(u8) {
+function demoSend(u8, tab) {
+  tab = tab || activeTerminalTab();
+  if (!tab) return;
   const s = new TextDecoder().decode(u8);
   for (const ch of s) {
     const c = ch.codePointAt(0);
     if (c === 13 || c === 10) {
-      demoWrite("\r\n");
-      const cmd = demoLine.trim();
-      demoLine = "";
-      if (cmd === "clear") { demoWrite("\x1b[2J\x1b[H"); demoPrompt(); continue; }
+      demoWrite("\r\n", tab);
+      const cmd = tab.demoLine.trim();
+      tab.demoLine = "";
+      if (cmd === "clear") { demoWrite("\x1b[2J\x1b[H", tab); demoPrompt(tab); continue; }
       if (cmd === "exit") {
-        demoWrite("\x1b[33m[演示] 会话结束\x1b[0m\r\n");
-        rawOn = false; paintShellBtns(); ttyState("会话已结束");
+        demoWrite("\x1b[33m[演示] 会话结束\x1b[0m\r\n", tab);
+        tab.state = "idle"; tab.sid = null; paintShellBtns(); renderTerminalTabs(); ttyState("会话已结束");
         continue;
       }
       if (cmd) {
         const body = DEMO_CMDS[cmd];
-        demoWrite((body == null ? ("bash: " + cmd.split(" ")[0] + ": command not found") : body) + "\r\n");
+        demoWrite((body == null ? ("bash: " + cmd.split(" ")[0] + ": command not found") : body) + "\r\n", tab);
       }
-      demoPrompt();
+      demoPrompt(tab);
     } else if (c === 127 || c === 8) {
-      if (demoLine.length) { demoLine = demoLine.slice(0, -1); demoWrite("\b \b"); }
+      if (tab.demoLine.length) { tab.demoLine = tab.demoLine.slice(0, -1); demoWrite("\b \b", tab); }
     } else if (c === 3) {
-      demoWrite("^C\r\n"); demoLine = ""; demoPrompt();
+      demoWrite("^C\r\n", tab); tab.demoLine = ""; demoPrompt(tab);
     } else if (c === 12) {
-      demoWrite("\x1b[2J\x1b[H"); demoPrompt();
+      demoWrite("\x1b[2J\x1b[H", tab); demoPrompt(tab);
     } else if (c >= 32) {
-      demoLine += ch; demoWrite(ch);
+      tab.demoLine += ch; demoWrite(ch, tab);
     }
   }
 }

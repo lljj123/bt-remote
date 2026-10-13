@@ -154,11 +154,14 @@ class GatewayCommandTests(unittest.TestCase):
         with mock.patch.object(GATEWAY, "_storage_lsblk", return_value=tree), \
                 mock.patch.object(GATEWAY, "_storage_space", return_value=(100, 40, 60)):
             rows = GATEWAY.storage_rows()
-        by_path = {row["path"]: row for row in rows}
-        self.assertEqual(by_path["/dev/mmcblk2"]["size_bytes"], 8000000000)
-        self.assertTrue(by_path["/dev/mmcblk2p1"]["can_mount"])
-        self.assertTrue(by_path["/dev/sda1"]["external"])
-        self.assertEqual(by_path["/dev/sda1"]["mountpoint"], "/media/usb")
+        self.assertEqual(len(rows), 2)
+        by_disk = {row["disk_path"]: row for row in rows}
+        self.assertEqual(by_disk["/dev/mmcblk2"]["size_bytes"], 8000000000)
+        self.assertEqual(by_disk["/dev/mmcblk2"]["path"], "/dev/mmcblk2p1")
+        self.assertTrue(by_disk["/dev/mmcblk2"]["can_mount"])
+        self.assertTrue(by_disk["/dev/sda"]["external"])
+        self.assertEqual(by_disk["/dev/sda"]["path"], "/dev/sda1")
+        self.assertEqual(by_disk["/dev/sda"]["mountpoint"], "/media/usb")
 
     def test_storage_lsblk_falls_back_for_util_linux_234(self):
         fallback = {"blockdevices": [{"name": "sda", "path": "/dev/sda",
@@ -170,6 +173,24 @@ class GatewayCommandTests(unittest.TestCase):
         self.assertEqual(rows[0]["path"], "/dev/sda")
         self.assertIn("MOUNTPOINTS", runner.call_args_list[0].args[0][-1])
         self.assertIn("MOUNTPOINT", runner.call_args_list[1].args[0][-1])
+
+    def test_storage_selects_one_primary_volume_per_drive(self):
+        tree = [{
+            "name": "mmcblk0", "path": "/dev/mmcblk0", "type": "disk", "size": 32000,
+            "children": [
+                {"name": "mmcblk0p1", "path": "/dev/mmcblk0p1", "type": "part",
+                 "size": 1000, "fstype": "vfat", "mountpoints": ["/boot"]},
+                {"name": "mmcblk0p2", "path": "/dev/mmcblk0p2", "type": "part",
+                 "size": 30000, "fstype": "ext4", "mountpoints": ["/"]},
+            ],
+        }]
+        with mock.patch.object(GATEWAY, "_storage_lsblk", return_value=tree), \
+                mock.patch.object(GATEWAY, "_storage_space", return_value=(100, 40, 60)):
+            rows = GATEWAY.storage_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["disk_path"], "/dev/mmcblk0")
+        self.assertEqual(rows[0]["path"], "/dev/mmcblk0p2")
+        self.assertEqual(rows[0]["mountpoint"], "/")
 
     def test_storage_mount_accepts_only_discovered_filesystem(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -375,10 +396,29 @@ class GatewayCommandTests(unittest.TestCase):
     def test_term_exec_and_caps(self):
         caps = GATEWAY.cmd_term_caps(None, {})
         self.assertEqual(caps["exec"]["name"], "term.exec")
+        self.assertEqual(caps["max_sessions"], 4)
         result = GATEWAY.cmd_term_exec(None, {"command": "printf hello"})
         self.assertEqual(result["exit_code"], 0)
         self.assertEqual(base64.b64decode(result["output_b64"]), b"hello")
         self.assertFalse(result["truncated"])
+
+    def test_multiple_mux_terminals_have_independent_session_ids(self):
+        sess = types.SimpleNamespace(
+            mux_mode=False, shell_pid=None, terms_lock=GATEWAY.threading.Lock(),
+            terms={}, peer="test")
+        args = {"protocol": "json-mux-v1", "shell": "/bin/bash", "cols": 80, "rows": 24}
+        with mock.patch.object(GATEWAY.pty, "fork", side_effect=[(101, 11), (102, 12)]), \
+                mock.patch.object(GATEWAY, "_set_winsize", side_effect=lambda _fd, c, r: (c, r)), \
+                mock.patch.object(GATEWAY.os, "set_blocking"):
+            first = GATEWAY.cmd_term_shell(sess, args)
+            second = GATEWAY.cmd_term_shell(sess, args)
+        self.assertNotEqual(first["sid"], second["sid"])
+        self.assertEqual(len(sess.terms), 2)
+        accepted = GATEWAY.Session._term_control(sess, "term.input", {
+            "sid": first["sid"], "b64": base64.b64encode(b"pwd\n").decode()})
+        self.assertEqual(accepted["accepted"], 4)
+        self.assertEqual(bytes(sess.terms[first["sid"]]["input"]), b"pwd\n")
+        self.assertEqual(bytes(sess.terms[second["sid"]]["input"]), b"")
 
     def test_term_exec_bounds_output_and_timeout(self):
         result = GATEWAY.cmd_term_exec(None, {

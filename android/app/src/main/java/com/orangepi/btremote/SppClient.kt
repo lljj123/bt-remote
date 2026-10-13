@@ -21,6 +21,7 @@ class SppClient(ctx: Context) {
     var onLine: ((String) -> Unit)? = null
     var onRaw: ((ByteArray) -> Unit)? = null
     var onState: ((String, String) -> Unit)? = null
+    var onTraffic: ((Long, Long) -> Unit)? = null
     private val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     private class Connection {
         var socket: BluetoothSocket? = null
@@ -31,6 +32,8 @@ class SppClient(ctx: Context) {
         var connected = false
         var raw = false
         var shellRequest: Any? = null
+        @Volatile var txBytes = 0L
+        @Volatile var rxBytes = 0L
         val timer = Timer(true)
         var shellTimeout: TimerTask? = null
     }
@@ -93,6 +96,7 @@ class SppClient(ctx: Context) {
                                         val data = c.queue.take()
                                         output.write(data)
                                         output.flush()
+                                        c.txBytes += data.size
                                     }
                                 } catch (e: Exception) { fail(c, e) }
                             }, "spp-writer").also { it.start() }
@@ -101,14 +105,17 @@ class SppClient(ctx: Context) {
                                     { line ->
                                         val msg = JSONObject(line)
                                         val ready = msg.optString("t") == "ev" && msg.optString("name") == "term.ready"
-                                        if (ready && msg.optJSONObject("data")?.optString("protocol") != "escaped-v1")
-                                            throw IOException("Please update board terminal protocol")
+                                        val protocol = msg.optJSONObject("data")?.optString("protocol")
+                                        if (ready) {
+                                            c.shellRequest = null
+                                            c.shellTimeout?.cancel()
+                                        }
                                         if (msg.optString("t") == "res" && msg.opt("id") == c.shellRequest && !msg.optBoolean("ok")) {
                                             c.shellRequest = null
                                             c.shellTimeout?.cancel()
                                         }
                                         onLine?.invoke(line)
-                                        ready
+                                        ready && protocol == "escaped-v1"
                                     },
                                     { onRaw?.invoke(it) },
                                     { raw -> c.raw = raw; c.shellRequest = null; c.shellTimeout?.cancel() }
@@ -118,6 +125,7 @@ class SppClient(ctx: Context) {
                                     while (owns(c)) {
                                         val n = input.read(bytes)
                                         if (n < 0) throw IOException("Connection closed")
+                                        c.rxBytes += n
                                         synchronized(this) {
                                             if (current !== c) return@reader
                                             decoder.feed(bytes, n)
@@ -125,6 +133,29 @@ class SppClient(ctx: Context) {
                                     }
                                 } catch (e: Exception) { fail(c, e) }
                             }, "spp-reader")
+                            var previousTx = 0L
+                            var previousRx = 0L
+                            var previousAt = System.nanoTime()
+                            fun scheduleTrafficSample() {
+                                try {
+                                    c.timer.schedule(object : TimerTask() {
+                                        override fun run() {
+                                            if (!owns(c)) return
+                                            val now = System.nanoTime()
+                                            val seconds = ((now - previousAt).coerceAtLeast(1L)) / 1_000_000_000.0
+                                            val tx = c.txBytes
+                                            val rx = c.rxBytes
+                                            onTraffic?.invoke(((tx - previousTx) / seconds).toLong().coerceAtLeast(0L),
+                                                ((rx - previousRx) / seconds).toLong().coerceAtLeast(0L))
+                                            previousTx = tx
+                                            previousRx = rx
+                                            previousAt = now
+                                            scheduleTrafficSample()
+                                        }
+                                    }, 1000)
+                                } catch (_: IllegalStateException) { }
+                            }
+                            scheduleTrafficSample()
                             onState?.invoke("connected", mac)
                             c.reader!!.start()
                         }
@@ -200,5 +231,6 @@ class SppClient(ctx: Context) {
         c.writer?.interrupt()
         c.queue.clear()
         c.timer.cancel()
+        onTraffic?.invoke(0, 0)
     }
 }

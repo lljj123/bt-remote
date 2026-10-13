@@ -30,7 +30,7 @@
 `term.caps` 返回交互终端和单次执行能力：
 
 ```json
-{"interactive_root":true,"restricted":false,"protocols":["escaped-v1","json-mux-v1"],"shells":["/bin/bash","/bin/sh","/bin/dash"],"allow":["*"],"max_out_kb":2,"exec":{"name":"term.exec","max_command_bytes":2048,"max_output_bytes":2048,"timeout_s_max":120}}
+{"interactive_root":true,"restricted":false,"protocols":["escaped-v1","json-mux-v1"],"shells":["/bin/bash","/bin/sh","/bin/dash"],"allow":["*"],"max_out_kb":2,"max_sessions":4,"exec":{"name":"term.exec","max_command_bytes":2048,"max_output_bytes":2048,"timeout_s_max":120}}
 ```
 
 ## 系统服务分页
@@ -123,8 +123,9 @@ Mihomo 配置保存，列表响应只显示不含查询参数的提示。
 
 ## 磁盘与 U 盘
 
-`storage.list {"offset":0,"limit":8}` 通过 `lsblk` 分页返回板载磁盘、闪存、分区和
-USB 存储，包含容量、文件系统、卷标、挂载点、已用空间及是否可挂载。
+`storage.list {"offset":0,"limit":8}` 通过 `lsblk` 每块物理磁盘、板载闪存或
+USB 存储只返回一项。主文件系统优先级为根分区、App 管理的挂载、容量最大的文件系统；
+响应包含整盘容量、`disk_path`、实际操作用的 `path`、文件系统、卷标、挂载点和已用空间。
 `storage.mount {"path":"/dev/sda1"}` 只接受当前枚举出的带文件系统设备，挂载到
 `/mnt/bt-remote/` 并使用 `nosuid,nodev`。`storage.unmount` 只允许卸载由 App 挂载到
 该目录下的文件系统，不会卸载系统原有挂载点。

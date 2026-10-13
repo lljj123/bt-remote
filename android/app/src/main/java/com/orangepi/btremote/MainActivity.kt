@@ -47,6 +47,7 @@ import java.security.MessageDigest
  * 原生 -> JS 回调：
  *   window.onBtLine(lineJson)        行相位：每收到一行
  *   window.onBtState({state,info})   连接状态变化
+ *   window.onBtTraffic({up_bps,down_bps}) 手机→板子/板子→手机实时速率
  *   window.onBtRaw(b64)              裸相位：终端字节流（base64）
  *
  * 为什么用 base64：JavascriptInterface 只支持基本类型与 String，
@@ -118,6 +119,10 @@ class MainActivity : AppCompatActivity() {
         spp.onState = { state, info ->
             val payload = JSONObject().put("state", state).put("info", info).toString()
             emit("window.onBtState", payload)
+        }
+        spp.onTraffic = { up, down ->
+            val payload = JSONObject().put("up_bps", up).put("down_bps", down).toString()
+            emit("window.onBtTraffic", payload)
         }
 
         web.addJavascriptInterface(Bridge(), "AndroidBt")

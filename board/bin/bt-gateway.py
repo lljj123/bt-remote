@@ -65,6 +65,7 @@ TERM_PROTOCOL = "escaped-v1"
 TERM_MUX_PROTOCOL = "json-mux-v1"
 TERM_CHUNK = 2048
 TERM_INPUT_LIMIT = 65536
+TERM_MAX_SESSIONS = 4
 TERM_EXEC_COMMAND_MAX = 2048
 TERM_EXEC_OUTPUT_MAX = 2048
 TERM_EXEC_TIMEOUT_MAX = 120.0
@@ -142,7 +143,6 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("bt-gateway")
 
-PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 
 
 def log(msg, level=logging.INFO):
@@ -461,7 +461,7 @@ def push_event(kind, data):
 
 # ------------------------------------------------------------------ 采样器
 class Sampler(threading.Thread):
-    """/proc 采样线程：CPU 占用、网卡速率、进程占用都靠两次采样求差。"""
+    """/proc 采样线程：CPU 占用和网卡速率靠两次采样求差。"""
 
     def __init__(self, interval=1.0):
         super().__init__(daemon=True)
@@ -492,30 +492,6 @@ class Sampler(threading.Thread):
                 out[name.strip()] = (int(c[0]), int(c[8]))  # rx_bytes, tx_bytes
         return out
 
-    @staticmethod
-    def procs():
-        out = {}
-        for pid in os.listdir("/proc"):
-            if not pid.isdigit():
-                continue
-            try:
-                with open("/proc/%s/stat" % pid, "rb") as f:
-                    raw = f.read()
-            except Exception:
-                continue
-            rp = raw.rfind(b")")
-            lp = raw.find(b"(")
-            if rp < 0 or lp < 0:
-                continue
-            comm = raw[lp + 1:rp].decode("utf-8", "replace")
-            rest = raw[rp + 2:].split()
-            try:
-                utime, stime, rss = int(rest[11]), int(rest[12]), int(rest[21])
-            except Exception:
-                continue
-            out[int(pid)] = (utime + stime, rss, comm)
-        return out
-
     def snapshot(self):
         total, idle = self.cpu_stat()
         return {
@@ -523,7 +499,6 @@ class Sampler(threading.Thread):
             "total": total,
             "idle": idle,
             "net": self.net_dev(),
-            "procs": self.procs(),
         }
 
     def run(self):
@@ -766,20 +741,6 @@ def build_metrics():
             d["signal_dbm"] = lk["signal_dbm"]
         net[name] = d
 
-    top = []
-    for pid, (jif, rss, comm) in cur["procs"].items():
-        pj = prev["procs"].get(pid)
-        if not pj:
-            continue
-        cpu = 100.0 * (jif - pj[0]) / dt_total
-        if cpu <= 0:
-            continue
-        top.append({"pid": pid, "name": comm,
-                    "cpu_pct": round(cpu, 1),
-                    "mem_pct": round(100.0 * rss * PAGE_SIZE / (total_kb * 1024), 1)})
-    top.sort(key=lambda x: -x["cpu_pct"])
-    top = top[:5]
-
     return {
         "ts": int(cur["ts"]),
         "cpu": {"pct": cpu_pct,
@@ -793,7 +754,6 @@ def build_metrics():
         "disk": {"root_total_kb": root_total, "root_used_kb": root_used,
                  "root_free_kb": root_free},
         "net": net,
-        "top": top,
     }
 
 
@@ -1512,11 +1472,17 @@ def _storage_space(path):
 
 
 def storage_rows():
+    """Return one primary filesystem for each physical storage device.
+
+    ``lsblk`` exposes a disk and all of its partitions.  The App only needs one
+    useful row per drive, so prefer the root filesystem, an App-managed mount,
+    then the largest filesystem partition.
+    """
     result = []
 
-    def visit(item, parent=None, inherited=None):
+    def describe(item, parent=None, inherited=None):
         if not isinstance(item, dict):
-            return
+            return None
         kind = str(item.get("type") or "")
         transport = str(item.get("tran") or (inherited or {}).get("transport") or "")
         removable = bool(item.get("rm") or (inherited or {}).get("removable"))
@@ -1528,7 +1494,7 @@ def storage_rows():
         if kind in ("disk", "part") and path.startswith("/dev/"):
             fstype = str(item.get("fstype") or "")
             read_only = bool(item.get("ro"))
-            result.append({
+            return {
                 "name": str(item.get("name") or item.get("kname") or os.path.basename(path)),
                 "path": path,
                 "type": kind,
@@ -1548,16 +1514,61 @@ def storage_rows():
                 "can_mount": bool(fstype and not mountpoint and not read_only),
                 "managed_mount": bool(mountpoint and os.path.realpath(mountpoint).startswith(
                     os.path.realpath(STORAGE_MOUNT_ROOT) + os.sep)),
-            })
+            }
+        return None
+
+    def collect(item, parent=None, inherited=None):
+        row = describe(item, parent, inherited)
+        rows = [row] if row else []
+        transport = str(item.get("tran") or (inherited or {}).get("transport") or "")
+        removable = bool(item.get("rm") or (inherited or {}).get("removable"))
+        model = _utf8_prefix(str(item.get("model") or (inherited or {}).get("model") or "").strip(), 160)
         inherited_next = {"transport": transport, "removable": removable, "model": model}
+        path = str(item.get("path") or "")
         for child in item.get("children") or []:
-            visit(child, path or parent, inherited_next)
+            rows.extend(collect(child, path or parent, inherited_next))
+        return rows
 
     for device in _storage_lsblk():
-        visit(device)
-    # Root first, then internal disks/partitions, then removable/USB devices.
+        rows = collect(device)
+        if not rows:
+            continue
+        disk = next((row for row in rows if row["type"] == "disk"), rows[0])
+        filesystems = [row for row in rows if row.get("fstype")]
+        candidates = filesystems or rows
+
+        def primary_key(row):
+            if row.get("mountpoint") == "/":
+                rank = 0
+            elif row.get("managed_mount"):
+                rank = 1
+            elif row.get("fstype"):
+                rank = 2
+            else:
+                rank = 3
+            return rank, -int(row.get("size_bytes") or 0), row.get("path", "")
+
+        primary = min(candidates, key=primary_key).copy()
+        volume_name = primary.get("name") or os.path.basename(primary.get("path", ""))
+        volume_size = int(primary.get("size_bytes") or 0)
+        primary.update({
+            "name": disk.get("name") or volume_name,
+            "type": "disk",
+            "parent": "",
+            "disk_path": disk.get("path") or primary.get("path"),
+            "volume_name": volume_name,
+            "volume_size_bytes": volume_size,
+            "size_bytes": int(disk.get("size_bytes") or volume_size),
+            "model": disk.get("model") or primary.get("model") or "",
+            "transport": disk.get("transport") or primary.get("transport") or "",
+            "external": bool(disk.get("external") or primary.get("external")),
+            "removable": bool(disk.get("removable") or primary.get("removable")),
+        })
+        result.append(primary)
+
+    # Root first, then internal drives, then removable/USB drives.
     result.sort(key=lambda row: (row.get("mountpoint") != "/", row.get("external", False),
-                                 row.get("parent") != "", row.get("path", "")))
+                                 row.get("disk_path", row.get("path", ""))))
     return result
 
 
@@ -1590,7 +1601,8 @@ def _storage_find(path):
 
 
 def _mount_name(row):
-    base = re.sub(r"[^A-Za-z0-9._-]+", "-", row.get("name") or "volume").strip(".-")
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", row.get("volume_name") or
+                  os.path.basename(row.get("path") or "") or "volume").strip(".-")
     return (base or "volume")[:80]
 
 
@@ -2521,6 +2533,7 @@ def cmd_term_caps(_s, _a):
         "shells": list(SHELL_WHITELIST),
         "allow": ["*"],
         "max_out_kb": TERM_EXEC_OUTPUT_MAX // 1024,
+        "max_sessions": TERM_MAX_SESSIONS,
         "exec": {"name": "term.exec",
                  "max_command_bytes": TERM_EXEC_COMMAND_MAX,
                  "max_output_bytes": TERM_EXEC_OUTPUT_MAX,
@@ -2643,7 +2656,8 @@ def cmd_term_shell(sess, a):
     a = a or {}
     if a.get("protocol") not in (TERM_PROTOCOL, TERM_MUX_PROTOCOL):
         raise CmdError("E_ARGS", "unsupported terminal protocol")
-    if sess.mux_mode and a.get("protocol") != TERM_MUX_PROTOCOL:
+    protocol = a.get("protocol")
+    if sess.mux_mode and protocol != TERM_MUX_PROTOCOL:
         raise CmdError("E_ARGS", "reconnect to use legacy terminal protocol")
     shell = a.get("shell", "/bin/bash")
     if shell not in SHELL_WHITELIST:
@@ -2655,7 +2669,11 @@ def cmd_term_shell(sess, a):
     except (TypeError, ValueError):
         raise CmdError("E_ARGS", "cols/rows must be int")
     term = str(a.get("term", "xterm-256color"))[:64]
-    if sess.shell_pid is not None:
+    if protocol == TERM_MUX_PROTOCOL:
+        with sess.terms_lock:
+            if len(sess.terms) >= TERM_MAX_SESSIONS:
+                raise CmdError("E_BUSY", "terminal session limit reached")
+    elif sess.shell_pid is not None:
         raise CmdError("E_BUSY", "a shell is already running on this session")
     pid, fd = pty.fork()
     if pid == 0:
@@ -2676,14 +2694,27 @@ def cmd_term_shell(sess, a):
         os._exit(127)
     cols, rows = _set_winsize(fd, cols, rows)
     os.set_blocking(fd, False)
-    sess.shell_pid = pid
-    sess.shell_fd = fd
-    sess.shell_cols = cols
-    sess.shell_rows = rows
-    log("shell open peer=%s pid=%d user=root term=%s size=%dx%d"
-        % (sess.peer, pid, term, cols, rows))
-    return {"pid": pid, "user": "root", "shell": shell,
-            "cols": cols, "rows": rows, "cwd": "/root"}
+    data = {"pid": pid, "user": "root", "shell": shell,
+            "cols": cols, "rows": rows, "cwd": "/root", "protocol": protocol}
+    if protocol == TERM_MUX_PROTOCOL:
+        sid = uuid.uuid4().hex
+        state = {"sid": sid, "pid": pid, "fd": fd, "cols": cols, "rows": rows,
+                 "stop": threading.Event(), "lock": threading.Lock(),
+                 "input": bytearray(), "size": None, "thread": None}
+        with sess.terms_lock:
+            sess.terms[sid] = state
+        sess.mux_mode = True
+        data["sid"] = sid
+        log("shell open peer=%s sid=%s pid=%d user=root term=%s size=%dx%d"
+            % (sess.peer, sid[:8], pid, term, cols, rows))
+    else:
+        sess.shell_pid = pid
+        sess.shell_fd = fd
+        sess.shell_cols = cols
+        sess.shell_rows = rows
+        log("shell open peer=%s pid=%d user=root term=%s size=%dx%d"
+            % (sess.peer, pid, term, cols, rows))
+    return data
 
 
 # ------------------------------------------------------------------ 命令表
@@ -2769,12 +2800,8 @@ class Session(threading.Thread):
         self.shell_cols = 80
         self.shell_rows = 24
         self.mux_mode = False
-        self.term_id = None
-        self.term_thread = None
-        self.term_stop = threading.Event()
-        self.term_lock = threading.Lock()
-        self.term_input = bytearray()
-        self.term_size = None
+        self.terms_lock = threading.Lock()
+        self.terms = {}
         self.job_lock = threading.Lock()
         self.file_uploads = {}
 
@@ -3019,19 +3046,19 @@ class Session(threading.Thread):
                     data = fn(self, args)
                     if name == "term.shell":
                         if args.get("protocol") == TERM_MUX_PROTOCOL:
-                            self.mux_mode = True
-                            self.term_id = uuid.uuid4().hex
-                            self.term_stop.clear()
-                            with self.term_lock:
-                                self.term_input.clear()
-                                self.term_size = None
-                            data.update({"sid": self.term_id, "protocol": TERM_MUX_PROTOCOL})
                             self.res_ok(rid, data)
-                            self.send_ev("term.ready", {"sid": self.term_id,
+                            sid = data["sid"]
+                            with self.terms_lock:
+                                state = self.terms.get(sid)
+                            if state is None:
+                                raise CmdError("E_STATE", "terminal session disappeared")
+                            self.send_ev("term.ready", {"sid": sid,
                                          "protocol": TERM_MUX_PROTOCOL,
-                                         "cols": self.shell_cols, "rows": self.shell_rows})
-                            self.term_thread = threading.Thread(target=self._term_mux, daemon=True)
-                            self.term_thread.start()
+                                         "cols": state["cols"], "rows": state["rows"]})
+                            thread = threading.Thread(target=self._term_mux,
+                                                      args=(sid,), daemon=True)
+                            state["thread"] = thread
+                            thread.start()
                             continue
                         with self.wlock:
                             self.raw_mode = True
@@ -3055,10 +3082,12 @@ class Session(threading.Thread):
                 log("cmd %s -> %.2fs" % (name, time.time() - t0))
         finally:
             self.close()
-            if self.term_thread is not None:
-                self.term_thread.join(timeout=5)
-            else:
-                self._shell_cleanup()
+            with self.terms_lock:
+                threads = [state.get("thread") for state in self.terms.values()]
+            for thread in threads:
+                if thread is not None and thread is not threading.current_thread():
+                    thread.join(timeout=5)
+            self._shell_cleanup()
 
     def _command_job(self, rid, name, fn, args):
         # One ordinary command at a time; controls and heartbeat stay responsive.
@@ -3077,9 +3106,13 @@ class Session(threading.Thread):
             self.job_lock.release()
 
     def _term_control(self, name, args):
-        with self.term_lock:
-            if (not self.mux_mode or self.term_id is None or
-                    args.get("sid") != self.term_id or self.term_stop.is_set()):
+        sid = args.get("sid")
+        with self.terms_lock:
+            state = self.terms.get(sid)
+        if not isinstance(sid, str) or state is None or state["stop"].is_set():
+            raise CmdError("E_STATE", "terminal session is not active")
+        with state["lock"]:
+            if state["stop"].is_set():
                 raise CmdError("E_STATE", "terminal session is not active")
             if name == "term.input":
                 encoded = args.get("b64")
@@ -3091,35 +3124,39 @@ class Session(threading.Thread):
                     raise CmdError("E_ARGS", "invalid base64")
                 if len(data) > TERM_CHUNK:
                     raise CmdError("E_ARGS", "terminal input exceeds chunk limit")
-                if len(self.term_input) + len(data) > TERM_INPUT_LIMIT:
+                if len(state["input"]) + len(data) > TERM_INPUT_LIMIT:
                     raise CmdError("E_BUSY", "terminal input buffer full")
-                self.term_input.extend(data)
+                state["input"].extend(data)
                 return {"accepted": len(data)}
             if name == "term.resize":
                 cols, rows = args.get("cols"), args.get("rows")
                 if type(cols) is not int or type(rows) is not int:
                     raise CmdError("E_ARGS", "cols/rows must be integers")
-                self.term_size = (cols, rows)
+                state["size"] = (cols, rows)
             else:
-                self.term_stop.set()
+                state["stop"].set()
             return {"accepted": True}
 
-    def _term_mux(self):
-        fd, pid, sid = self.shell_fd, self.shell_pid, self.term_id
+    def _term_mux(self, sid):
+        with self.terms_lock:
+            state = self.terms.get(sid)
+        if state is None:
+            return
+        fd, pid = state["fd"], state["pid"]
         reason = "exit"
         try:
-            while not self.closed and not self.term_stop.is_set():
-                with self.term_lock:
-                    size, self.term_size = self.term_size, None
-                    pending = bool(self.term_input)
+            while not self.closed and not state["stop"].is_set():
+                with state["lock"]:
+                    size, state["size"] = state["size"], None
+                    pending = bool(state["input"])
                 if size is not None:
-                    self.shell_cols, self.shell_rows = _set_winsize(fd, *size)
+                    state["cols"], state["rows"] = _set_winsize(fd, *size)
                 readable, writable, _ = select.select([fd], [fd] if pending else [], [], 0.05)
                 if writable:
-                    with self.term_lock:
+                    with state["lock"]:
                         try:
-                            n = os.write(fd, self.term_input[:TERM_CHUNK])
-                            del self.term_input[:n]
+                            n = os.write(fd, state["input"][:TERM_CHUNK])
+                            del state["input"][:n]
                         except BlockingIOError:
                             pass
                 if readable:
@@ -3133,14 +3170,14 @@ class Session(threading.Thread):
                                  "b64": base64.b64encode(data).decode("ascii")})
                     # Yield between bounded frames so command responses can interleave.
                     time.sleep(0.001)
-            if self.closed or self.term_stop.is_set():
+            if self.closed or state["stop"].is_set():
                 reason = "close"
         except (OSError, ValueError):
             reason = "pty_closed"
         finally:
-            with self.term_lock:
-                self.term_stop.set()
-                self.term_input.clear()
+            with state["lock"]:
+                state["stop"].set()
+                state["input"].clear()
             try:
                 os.killpg(os.tcgetpgrp(fd), signal.SIGHUP)
             except OSError:
@@ -3152,10 +3189,10 @@ class Session(threading.Thread):
                 pass
             # Keep the shell busy until its final event is on the wire.
             self.send_ev("term.exit", {"sid": sid, "code": code, "reason": reason})
-            with self.term_lock:
-                self.shell_fd = None
-                self.term_id = None
-                self.shell_pid = None
+            with self.terms_lock:
+                self.terms.pop(sid, None)
+            log("shell close peer=%s sid=%s pid=%d code=%d reason=%s"
+                % (self.peer, sid[:8], pid, code, reason))
 
     def _reap_shell(self, pid):
         for _ in range(10):
@@ -3293,7 +3330,9 @@ class Session(threading.Thread):
         if self.closed:
             return
         self.closed = True
-        self.term_stop.set()
+        with self.terms_lock:
+            for state in self.terms.values():
+                state["stop"].set()
         self.log_follow_stop()
         for upload_id in list(self.file_uploads):
             _file_upload_drop(self, upload_id)
