@@ -252,6 +252,7 @@ class GatewayCommandTests(unittest.TestCase):
                     "name": "机场 A", "url": "https://sub.example/path?token=secret-token"})
                 listed = GATEWAY.cmd_proxy_sub_list(None, {})
                 self.assertNotIn("secret-token", json.dumps(listed, ensure_ascii=False))
+                self.assertEqual(listed["items"], [{"id": saved["id"], "name": "机场 A"}])
                 applied = GATEWAY.cmd_proxy_sub_apply(None, {"id": saved["id"]})
                 data = yaml.safe_load(config.read_text())
                 state_data = json.loads(state.read_text())
@@ -308,6 +309,7 @@ class GatewayCommandTests(unittest.TestCase):
         self.assertEqual(FakeMihomo.mode, "global")
         GATEWAY.cmd_proxy_onoff(None, {"on": False})
         self.assertEqual(FakeMihomo.mode, "direct")
+        self.assertEqual(FakeMihomo.selected, "node-b")
         self.assertEqual(GATEWAY.cmd_proxy_delay(
             None, {"name": "node-b", "timeout_ms": 1000})["delay"], 82)
 

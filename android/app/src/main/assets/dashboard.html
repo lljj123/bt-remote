@@ -164,7 +164,10 @@
   #termWrap.selecting{box-shadow:0 0 0 2px var(--accent)}
   #tab-tty.fs #termWrap{flex:1;height:auto;max-height:none;min-height:0}
   #tab-tty.fs #ttyShellWrap{flex:1;min-height:0;display:flex;flex-direction:column}
-  #tab-tty.fs #ttyShellWrap>:not(#termWrap):not(#kbBar):not(#ttyActions){display:none!important}
+  #tab-tty.fs #ttyShellWrap>:not(.term-tabs):not(#termWrap):not(#kbBar):not(#ttyActions){display:none!important}
+  #tab-tty.fs .term-tabs{display:flex!important;margin:0 0 4px;min-height:28px}
+  #tab-tty.fs .term-tab{padding:3px 6px;font-size:10px}
+  #tab-tty.fs #btnTermAdd{padding:2px 8px;font-size:14px}
   #tab-tty.fs #ttyActions{display:flex;margin-top:4px;justify-content:flex-end}
   #tab-tty.fs #ttyActions>:not(#btnShFull){display:none}
   #tab-tty.fs #btnShFull{flex:0 0 auto!important;padding:3px 7px!important;font-size:10px;line-height:1.2}
@@ -1236,7 +1239,7 @@ function renderProxy() {
   $("#proxySwitch").classList.toggle("on", p.running);
   $("#proxySwitch").classList.toggle("disabled", !usable);
   let status = p.busy ? "操作中…" : p.configured ? (p.reachable ?
-    (p.running ? "代理路由已启用" : "当前为直连") : "Mihomo 不可达") : "Mihomo 未配置";
+    (p.running ? "代理路由已启用" : "当前为直连 · 订阅和节点已保留") : "Mihomo 不可达") : "Mihomo 未配置";
   if (p.error) status += " · " + p.error;
   $("#proxyStatus").textContent = status;
   document.querySelectorAll(".mode-bar button").forEach(b => {
@@ -1283,12 +1286,12 @@ async function proxyAction(name, args, message) {
 
 $("#proxySwitch").onclick = () => {
   if (proxyState.configured && proxyState.reachable)
-    proxyAction("proxy.onoff", { on: !proxyState.running }, !proxyState.running ? "代理已开启" : "已切到直连");
+    proxyAction("proxy.onoff", { on: !proxyState.running }, !proxyState.running ? "代理已开启" : "已切到直连，订阅和节点不会清除");
 };
 document.querySelectorAll(".mode-bar button").forEach(b => {
   b.onclick = () => proxyAction("proxy.mode", { mode: b.dataset.mode }, "代理模式已更新");
 });
-$("#btnProxyClear").onclick = () => proxyAction("proxy.mode", { mode: "direct" }, "已切到全部直连");
+$("#btnProxyClear").onclick = () => proxyAction("proxy.mode", { mode: "direct" }, "已切到全部直连，订阅和节点不会清除");
 $("#btnProxyRefresh").onclick = () => loadProxy(true);
 
 let proxySubscriptions = { items: [], active_id: "", config_ready: false, config_path: "" };
@@ -1306,8 +1309,7 @@ function renderProxySubscriptions() {
     proxySubscriptions.items.forEach(item => {
       const option = document.createElement("option");
       option.value = item.id;
-      option.textContent = (item.id === proxySubscriptions.active_id ? "当前 · " : "") + item.name +
-        (item.url_hint ? " · " + item.url_hint : "");
+      option.textContent = (item.id === proxySubscriptions.active_id ? "当前 · " : "") + item.name;
       select.appendChild(option);
     });
     select.value = proxySubscriptions.items.some(item => item.id === previous) ? previous :
@@ -1328,7 +1330,7 @@ async function loadProxySubscriptions() {
     proxySubError = "";
     paintBtTraffic(null, null);
   if (!isNative) {
-    proxySubscriptions = { items: [{ id: "demo00000001", name: "演示订阅", url_hint: "example.com/sub?…" }],
+    proxySubscriptions = { items: [{ id: "demo00000001", name: "演示订阅" }],
       active_id: "demo00000001", config_ready: true, config_path: "/etc/mihomo/config.yaml" };
     renderProxySubscriptions(); return;
   }
@@ -3132,9 +3134,9 @@ function startDemo() {
     ] });
     if (m.name === "storage.mount") return ok({ path: m.args.path, mountpoint: "/mnt/bt-remote/" + m.args.path.split("/").pop(), mounted: true });
     if (m.name === "storage.unmount") return ok({ path: m.args.path, mounted: false });
-    if (m.name === "proxy.sub.list") return ok({ items: [{ id: "demo00000001", name: "演示订阅", url_hint: "example.com/sub?…" }],
+    if (m.name === "proxy.sub.list") return ok({ items: [{ id: "demo00000001", name: "演示订阅" }],
       active_id: "demo00000001", config_ready: true, config_path: "/etc/mihomo/config.yaml" });
-    if (m.name === "proxy.sub.save") return ok({ id: "demo00000002", name: m.args.name, url_hint: "example.com/sub?…", saved: true });
+    if (m.name === "proxy.sub.save") return ok({ id: "demo00000002", name: m.args.name, saved: true });
     if (m.name === "proxy.sub.apply") return ok({ id: m.args.id, applied: true, group: "PROXY" });
     if (m.name === "proxy.sub.remove") return ok({ id: m.args.id, removed: true });
     if (m.name === "file.caps") return ok({ root: "/", chunk_bytes: 1536,

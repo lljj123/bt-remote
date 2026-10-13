@@ -78,7 +78,7 @@ BTG_MIHOMO_GROUP=PROXY
 BTG_MIHOMO_CONFIG=/etc/mihomo/config.yaml
 ```
 
-代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件、Selector 策略组和配置文件路径，随后执行 `sudo bt-remote restart`。App 可保存至多 12 个 Mihomo/Clash proxy-provider 订阅并选择应用；写入前会备份原配置到 `/etc/bt-gateway/mihomo-backups/`，控制器拒绝重载时自动恢复。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
+代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件、Selector 策略组和配置文件路径，随后执行 `sudo bt-remote restart`。App 可保存至多 12 个 Mihomo/Clash proxy-provider 订阅并选择应用，选择框只显示用户填写的机场名称，不回显订阅链接；关闭代理只切到直连，不删除订阅或节点选择。写入前会备份原配置到 `/etc/bt-gateway/mihomo-backups/`，控制器拒绝重载时自动恢复。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
 
 网关提供通用 `term.exec`，可在协议台中执行临时系统查询，不必再为每个查询增加专用网关命令。`term.exec` 与交互终端一样拥有 root 权限，具体协议见 [网关协议 v2](docs/gateway-protocol-v2.md)。App 概览不额外显示“自定义系统信息”卡片。
 
@@ -86,7 +86,7 @@ App 的“文件”页可浏览板端目录，提供返回历史、上一级、�
 
 “网络”页枚举当前所有接口，并把板载无线和 USB 无线网卡分别标识。选择任意已被内核驱动识别的无线接口后，可用该接口扫描、连接和忘记 WiFi；所选接口会作为独立 Netplan `wifis` 条目写入，不覆盖其它无线接口。“外设”页从 sysfs 读取 USB 型号、VID:PID、速率、驱动及关联的网卡、磁盘和串口。
 
-概览页通过 `lsblk` 每块物理存储只显示一项：系统盘、板载闪存和 USB 存储分别选择其主文件系统，不再展开所有分区；eMMC boot/RPMB 和 zram/ram 等实现设备会被隐藏。未挂载的主文件系统可挂载到 `/mnt/bt-remote/`；挂载后会出现在“文件”页快捷入口。FAT/exFAT 会跳过不支持的 `chmod`，仍保留原子替换流程。“服务”页不再列出 systemd 服务，代理与可折叠的电源/RTC 控制分开显示。App 不再采集或显示进程 Top，顶部始终显示手机→板子上传和板子→手机下载的蓝牙实时速率。
+概览页通过 `lsblk` 每块物理存储只显示一项：系统盘、板载闪存和 USB 存储分别选择其主文件系统，不再展开所有分区；eMMC boot/RPMB 和 zram/ram 等实现设备会被隐藏。未挂载的主文件系统可挂载到 `/mnt/bt-remote/`；挂载后会出现在“文件”页快捷入口。FAT/exFAT 会跳过不支持的 `chmod`，仍保留原子替换流程。“服务”页不再列出 systemd 服务，代理与可折叠的电源/RTC 控制分开显示。App 不再采集或显示进程 Top，顶部始终显示手机→板子上传和板子→手机下载的蓝牙实时速率；终端全屏时仍保留多终端选项卡状态栏。
 
 WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。USB 无线网卡仍需系统内核具备对应驱动/固件；若“外设”页可见但没有驱动和网卡名，需先解决板端驱动。默认 Netplan 配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
 

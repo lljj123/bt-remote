@@ -80,7 +80,8 @@
 {"t":"cmd","id":5,"name":"proxy.onoff","args":{"on":false}}
 ```
 
-`proxy.onoff true` 切到 `rule`，`false` 切到 `direct`。还提供底层兼容命令：
+`proxy.onoff true` 切到 `rule`，`false` 切到 `direct`。关闭只改变模式，不会删除
+已保存订阅、provider 配置或当前节点选择。还提供底层兼容命令：
 
 - `proxy.groups {}`
 - `proxy.nodes {"group":"PROXY"}`
@@ -92,7 +93,7 @@
 
 ### 订阅链接
 
-- `proxy.sub.list {}`：返回已保存订阅的名称、脱敏 URL 提示及当前选择，不返回完整链接。
+- `proxy.sub.list {}`：只返回已保存订阅的名称和当前选择，不返回订阅链接或 URL 提示。
 - `proxy.sub.save {"name":"机场 A","url":"https://..."}`：保存订阅，最多 12 个。
 - `proxy.sub.apply {"id":"..."}`：写入专用 `bt-remote-subscription` proxy-provider，并把 provider 加入选定策略组。
 - `proxy.sub.remove {"id":"..."}`：删除非当前订阅记录。

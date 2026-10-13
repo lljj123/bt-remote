@@ -2242,11 +2242,9 @@ def _proxy_sub_url(value):
 
 
 def _proxy_sub_public(item):
-    parsed = urllib.parse.urlparse(item["url"])
-    shown = (parsed.hostname or "") + (parsed.path or "")
-    if parsed.query:
-        shown += "?…"
-    return {"id": item["id"], "name": item["name"], "url_hint": _utf8_prefix(shown, 128)}
+    # The App only needs the user-assigned provider name. Keep the URL entirely
+    # inside root-owned state instead of returning even a redacted long hint.
+    return {"id": item["id"], "name": item["name"]}
 
 
 def cmd_proxy_sub_list(_s, _a):
