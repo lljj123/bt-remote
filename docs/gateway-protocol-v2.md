@@ -125,6 +125,7 @@ Mihomo 配置保存，列表响应只显示不含查询参数的提示。
 
 `storage.list {"offset":0,"limit":8}` 通过 `lsblk` 每块物理磁盘、板载闪存或
 USB 存储只返回一项。主文件系统优先级为根分区、App 管理的挂载、容量最大的文件系统；
+eMMC 的 boot/RPMB 节点和 zram/ram 压缩交换设备不会作为存储盘返回；
 响应包含整盘容量、`disk_path`、实际操作用的 `path`、文件系统、卷标、挂载点和已用空间。
 `storage.mount {"path":"/dev/sda1"}` 只接受当前枚举出的带文件系统设备，挂载到
 `/mnt/bt-remote/` 并使用 `nosuid,nodev`。`storage.unmount` 只允许卸载由 App 挂载到
@@ -142,6 +143,8 @@ USB 存储只返回一项。主文件系统优先级为根分区、App 管理的
 - `file.read {"path":"/root/a.txt","offset":0,"length":1536}`：Base64 分块读取。
 - `file.hash {"path":"/root/a.txt"}`：计算 SHA256。
 - `file.mkdir {"path":"/root/new-dir"}`。
+- `file.copy {"path":"/root/a","target":"/mnt/data/a"}`：复制文件、符号链接或目录，
+  不覆盖已有目标，也不允许把目录复制到自身或其子目录。
 - `file.rename {"path":"/root/a","target":"/root/b"}`：不覆盖已有目标。
 - `file.remove {"path":"/root/a","confirm":"DELETE"}`：仅文件、符号链接或空目录。
 

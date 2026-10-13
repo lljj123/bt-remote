@@ -192,6 +192,32 @@ class GatewayCommandTests(unittest.TestCase):
         self.assertEqual(rows[0]["path"], "/dev/mmcblk0p2")
         self.assertEqual(rows[0]["mountpoint"], "/")
 
+    def test_storage_hides_emmc_boot_and_zram_devices(self):
+        tree = [{
+            "name": "mmcblk0", "path": "/dev/mmcblk0", "type": "disk", "size": 32000,
+            "children": [{"name": "mmcblk0p1", "path": "/dev/mmcblk0p1",
+                          "type": "part", "size": 31000, "fstype": "ext4",
+                          "mountpoints": ["/"]}],
+        }, {
+            "name": "mmcblk2", "path": "/dev/mmcblk2", "type": "disk", "size": 8000,
+            "children": [{"name": "mmcblk2p1", "path": "/dev/mmcblk2p1",
+                          "type": "part", "size": 2100, "fstype": "f2fs",
+                          "mountpoints": ["/mnt/bt-remote/mmcblk2p1"]}],
+        }, {
+            "name": "mmcblk2boot0", "path": "/dev/mmcblk2boot0",
+            "type": "disk", "size": 4000,
+        }, {
+            "name": "mmcblk2boot1", "path": "/dev/mmcblk2boot1",
+            "type": "disk", "size": 4000,
+        }, {
+            "name": "zram0", "path": "/dev/zram0", "type": "disk", "size": 16000,
+        }]
+        with mock.patch.object(GATEWAY, "_storage_lsblk", return_value=tree), \
+                mock.patch.object(GATEWAY, "_storage_space", return_value=(100, 40, 60)):
+            rows = GATEWAY.storage_rows()
+        self.assertEqual([row["disk_path"] for row in rows],
+                         ["/dev/mmcblk0", "/dev/mmcblk2"])
+
     def test_storage_mount_accepts_only_discovered_filesystem(self):
         with tempfile.TemporaryDirectory() as directory:
             row = {"path": "/dev/sdz1", "name": "sdz1", "mountpoint": "",
@@ -420,6 +446,33 @@ class GatewayCommandTests(unittest.TestCase):
         self.assertEqual(bytes(sess.terms[first["sid"]]["input"]), b"pwd\n")
         self.assertEqual(bytes(sess.terms[second["sid"]]["input"]), b"")
 
+    def test_mux_command_worker_queues_file_tab_burst_in_order(self):
+        sess = GATEWAY.Session.__new__(GATEWAY.Session)
+        sess.closed = False
+        sess.job_queue = GATEWAY.queue.Queue(maxsize=32)
+        sess.log_follow_stop = mock.Mock()
+        sess.res_ok = mock.Mock()
+        sess.res_err = mock.Mock()
+        completed = []
+
+        def command(_session, args):
+            completed.append(args["name"])
+            return {"name": args["name"]}
+
+        worker = threading.Thread(target=sess._command_worker, daemon=True)
+        worker.start()
+        for request_id, name in enumerate(("storage.list", "file.caps", "file.list"), 1):
+            sess.job_queue.put_nowait((request_id, name, command, {"name": name}))
+        sess.job_queue.join()
+        sess.closed = True
+        sess.job_queue.put_nowait(None)
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(completed, ["storage.list", "file.caps", "file.list"])
+        self.assertEqual(sess.res_ok.call_count, 3)
+        sess.res_err.assert_not_called()
+
     def test_term_exec_bounds_output_and_timeout(self):
         result = GATEWAY.cmd_term_exec(None, {
             "command": "head -c 4096 /dev/zero", "max_output_bytes": 512})
@@ -458,6 +511,36 @@ class GatewayCommandTests(unittest.TestCase):
             GATEWAY.cmd_file_rename(None, {"path": str(created), "target": str(renamed)})
             GATEWAY.cmd_file_remove(None, {"path": str(renamed), "confirm": "DELETE"})
             self.assertFalse(renamed.exists())
+
+    def test_file_copy_supports_files_directories_and_rejects_unsafe_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_file = root / "source.txt"
+            source_file.write_text("copy me")
+            copied_file = root / "copied.txt"
+            result = GATEWAY.cmd_file_copy(None, {
+                "path": str(source_file), "target": str(copied_file)})
+            self.assertTrue(result["copied"])
+            self.assertEqual(copied_file.read_text(), "copy me")
+
+            source_dir = root / "folder"
+            source_dir.mkdir()
+            (source_dir / "nested.txt").write_text("nested")
+            (source_dir / "link").symlink_to("nested.txt")
+            copied_dir = root / "folder-copy"
+            GATEWAY.cmd_file_copy(None, {
+                "path": str(source_dir), "target": str(copied_dir)})
+            self.assertEqual((copied_dir / "nested.txt").read_text(), "nested")
+            self.assertTrue((copied_dir / "link").is_symlink())
+
+            with self.assertRaises(GATEWAY.CmdError) as existing:
+                GATEWAY.cmd_file_copy(None, {
+                    "path": str(source_file), "target": str(copied_file)})
+            self.assertEqual(existing.exception.code, "E_FILE_EXISTS")
+            with self.assertRaises(GATEWAY.CmdError) as recursive:
+                GATEWAY.cmd_file_copy(None, {
+                    "path": str(source_dir), "target": str(source_dir / "inside")})
+            self.assertEqual(recursive.exception.code, "E_FILE_ARGS")
 
     def test_file_upload_is_atomic_and_hash_checked(self):
         with tempfile.TemporaryDirectory() as directory:

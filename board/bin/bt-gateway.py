@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import pty
+import queue
 import re
 import select
 import shutil
@@ -1530,6 +1531,13 @@ def storage_rows():
         return rows
 
     for device in _storage_lsblk():
+        device_name = str(device.get("name") or device.get("kname") or "")
+        # eMMC boot/RPMB nodes and zram are kernel implementation devices, not
+        # user storage.  Showing them made one physical eMMC look like several
+        # disks in the App.
+        if (re.fullmatch(r"(?:zram|ram)\d+", device_name) or
+                re.fullmatch(r"mmcblk\d+(?:boot\d+|rpmb)", device_name)):
+            continue
         rows = collect(device)
         if not rows:
             continue
@@ -1836,7 +1844,8 @@ def cmd_file_caps(_s, _a):
     return {"root": "/", "chunk_bytes": FILE_CHUNK,
             "max_transfer_bytes": FILE_TRANSFER_MAX,
             "text_preview_bytes": FILE_TEXT_PREVIEW_MAX,
-            "atomic_upload": True, "delete_empty_dirs_only": True}
+            "atomic_upload": True, "copy": True,
+            "delete_empty_dirs_only": True}
 
 
 def cmd_file_list(_s, a):
@@ -1955,6 +1964,65 @@ def cmd_file_mkdir(_s, a):
     except OSError as error:
         _file_fail(error, "mkdir")
     return {"path": path, "created": True}
+
+
+def cmd_file_copy(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    source = _file_path(a.get("path"))
+    target = _file_path(a.get("target"), "target")
+    if source == "/" or target == "/":
+        raise CmdError("E_FILE_ARGS", "cannot copy filesystem root")
+    if os.path.lexists(target):
+        raise CmdError("E_FILE_EXISTS", "target already exists")
+    parent = os.path.dirname(target)
+    if not os.path.isdir(parent):
+        raise CmdError("E_FILE_NOTFOUND", "destination directory does not exist")
+    try:
+        info = os.lstat(source)
+    except OSError as error:
+        _file_fail(error, "copy")
+    kind = _file_kind(info.st_mode)
+    if kind not in ("file", "dir", "link"):
+        raise CmdError("E_FILE_TYPE", "special files cannot be copied here")
+    source_real = os.path.realpath(source)
+    target_real = os.path.realpath(target)
+    if kind == "dir" and (target_real == source_real or
+                           target_real.startswith(source_real + os.sep)):
+        raise CmdError("E_FILE_ARGS", "cannot copy a directory into itself")
+
+    # Build beside the destination and publish with one rename so failed copies
+    # do not leave a half-populated item in the file list.
+    temporary = os.path.join(parent, ".bt-copy-%s.part" % uuid.uuid4().hex)
+    try:
+        if kind == "dir":
+            shutil.copytree(source, temporary, symlinks=True)
+        elif kind == "link":
+            os.symlink(os.readlink(source), temporary)
+        else:
+            shutil.copy2(source, temporary, follow_symlinks=False)
+        if os.path.lexists(target):
+            raise CmdError("E_FILE_EXISTS", "target appeared during copy")
+        os.rename(temporary, target)
+    except CmdError:
+        if os.path.isdir(temporary) and not os.path.islink(temporary):
+            shutil.rmtree(temporary, ignore_errors=True)
+        else:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        raise
+    except OSError as error:
+        if os.path.isdir(temporary) and not os.path.islink(temporary):
+            shutil.rmtree(temporary, ignore_errors=True)
+        else:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        _file_fail(error, "copy")
+    return {"path": source, "target": target, "type": kind, "copied": True}
 
 
 def cmd_file_rename(_s, a):
@@ -2748,6 +2816,7 @@ COMMANDS = {
     "file.read": cmd_file_read,
     "file.hash": cmd_file_hash,
     "file.mkdir": cmd_file_mkdir,
+    "file.copy": cmd_file_copy,
     "file.rename": cmd_file_rename,
     "file.remove": cmd_file_remove,
     "file.upload.begin": cmd_file_upload_begin,
@@ -2802,7 +2871,7 @@ class Session(threading.Thread):
         self.mux_mode = False
         self.terms_lock = threading.Lock()
         self.terms = {}
-        self.job_lock = threading.Lock()
+        self.job_queue = queue.Queue(maxsize=32)
         self.file_uploads = {}
 
     # ---------------- 发送
@@ -2992,6 +3061,7 @@ class Session(threading.Thread):
             if not self.authenticate():
                 self.close()
                 return
+            threading.Thread(target=self._command_worker, daemon=True).start()
             self.last_beat = time.time()
             while not self.closed:
                 try:
@@ -3035,11 +3105,10 @@ class Session(threading.Thread):
                     self.res_err(rid, "E_NOCMD", "unknown command: %s" % name)
                     continue
                 if self.mux_mode and name not in ("term.shell", "dev.ping"):
-                    if not self.job_lock.acquire(blocking=False):
-                        self.res_err(rid, "E_BUSY", "another command is running; retry after its response")
-                    else:
-                        threading.Thread(target=self._command_job,
-                                         args=(rid, name, fn, args), daemon=True).start()
+                    try:
+                        self.job_queue.put_nowait((rid, name, fn, args))
+                    except queue.Full:
+                        self.res_err(rid, "E_BUSY", "command queue is full; retry later")
                     continue
                 t0 = time.time()
                 try:
@@ -3089,9 +3158,24 @@ class Session(threading.Thread):
                     thread.join(timeout=5)
             self._shell_cleanup()
 
+    def _command_worker(self):
+        # Serialize ordinary commands without rejecting a harmless burst such as
+        # storage.list + file.caps + file.list when the File tab opens. Terminal
+        # controls and heartbeat remain on the receive thread.
+        while not self.closed:
+            try:
+                job = self.job_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if job is None:
+                return
+            try:
+                self._command_job(*job)
+            finally:
+                self.job_queue.task_done()
+
     def _command_job(self, rid, name, fn, args):
-        # One ordinary command at a time; controls and heartbeat stay responsive.
-        # Already-started system mutations must finish their own rollback logic.
+        # Already-started system mutations finish their own timeout/rollback.
         try:
             if not self.closed:
                 self.res_ok(rid, fn(self, args))
@@ -3103,7 +3187,6 @@ class Session(threading.Thread):
         finally:
             if self.closed:
                 self.log_follow_stop()
-            self.job_lock.release()
 
     def _term_control(self, name, args):
         sid = args.get("sid")
@@ -3330,6 +3413,10 @@ class Session(threading.Thread):
         if self.closed:
             return
         self.closed = True
+        try:
+            self.job_queue.put_nowait(None)
+        except queue.Full:
+            pass
         with self.terms_lock:
             for state in self.terms.values():
                 state["stop"].set()

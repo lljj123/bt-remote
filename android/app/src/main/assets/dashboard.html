@@ -168,8 +168,22 @@
   #tab-tty.fs #ttyActions{display:flex;margin-top:4px;justify-content:flex-end}
   #tab-tty.fs #ttyActions>:not(#btnShFull){display:none}
   #tab-tty.fs #btnShFull{flex:0 0 auto!important;padding:3px 7px!important;font-size:10px;line-height:1.2}
-  .term-tools{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
-  .term-tools button{flex:1;min-width:64px;padding:6px 8px;font-size:12px}
+  .kb{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:7px}
+  .kb-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;
+    padding:5px;background:rgba(27,36,50,.72);border:1px solid var(--line);border-radius:10px}
+  .kb-group.kb-control{grid-column:1/-1;grid-template-columns:repeat(7,minmax(0,1fr));
+    background:rgba(59,130,246,.07);border-color:rgba(59,130,246,.24)}
+  .kb-group button{min-width:0;height:31px;padding:3px 2px;border-radius:7px;
+    font:10.5px/1 var(--mono);color:#b9c6d8;background:rgba(10,14,21,.42)}
+  .kb-group button:active{background:rgba(59,130,246,.22)}
+  .kb-group button.sticky{background:var(--accent);border-color:var(--accent);color:#fff;
+    box-shadow:0 0 0 2px rgba(59,130,246,.18)}
+  .kb-nav button{color:#d8e5f7;font-size:14px}
+  .kb-symbol button{color:#93c5fd;font-size:12px}
+  .term-tools{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;
+    margin-top:7px;padding:5px;background:rgba(27,36,50,.56);border:1px solid var(--line);
+    border-radius:10px}
+  .term-tools button{min-width:0;padding:6px 3px;font-size:11px;border-radius:7px}
   .term-tools button.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .term-tabs{display:flex;align-items:center;gap:5px;margin:0 0 6px;overflow:hidden}
   .term-tabs-list{display:flex;gap:5px;overflow-x:auto;flex:1;scrollbar-width:none}
@@ -205,7 +219,34 @@
 
   /* 文件管理 */
   .file-path{font-family:var(--mono);font-size:12px;min-width:0}
-  .file-row{display:flex;align-items:center;gap:9px;padding:10px 0;border-top:1px solid var(--line)}
+  .file-nav{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:6px;align-items:center}
+  .file-nav button{height:40px;padding:7px 10px;display:flex;align-items:center;gap:5px}
+  .file-nav .nav-ico{font:15px/1 var(--mono);color:var(--accent2)}
+  .file-shortcuts{margin-top:9px;padding:8px;background:rgba(27,36,50,.52);
+    border:1px solid var(--line);border-radius:10px}
+  .file-shortcut-head{font-size:10px;color:var(--muted);letter-spacing:.3px;margin:0 0 6px 2px}
+  .file-fav-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+  .file-fav-grid button{min-width:0;padding:6px 3px;font:10.5px/1.2 var(--mono);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:7px}
+  .file-storage-favs{display:flex;gap:5px;margin-top:6px;overflow-x:auto;
+    scrollbar-width:none;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+  .file-storage-favs::-webkit-scrollbar{display:none}
+  .file-storage-favs button{flex:0 0 auto;padding:6px 8px;font-size:10.5px;border-radius:7px}
+  .file-clipboard{display:flex;align-items:center;gap:8px;margin-top:9px;padding:7px 8px;
+    border:1px solid rgba(59,130,246,.38);border-radius:10px;background:rgba(59,130,246,.09)}
+  .file-clipboard.hide{display:none}
+  .file-clipboard .clip-ico{width:27px;height:27px;border-radius:7px;display:flex;
+    align-items:center;justify-content:center;background:rgba(59,130,246,.18);color:#93c5fd;flex:0 0 auto}
+  .file-clipboard .clip-info{flex:1;min-width:0}
+  .file-clipboard .clip-title{font-size:10px;color:var(--muted)}
+  .file-clipboard .clip-name{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .file-clipboard button{padding:4px 7px;font-size:10px;flex:0 0 auto}
+  .file-toolbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:9px}
+  .file-tool{min-width:0;height:42px;padding:6px;display:flex;align-items:center;
+    justify-content:center;gap:5px;font-size:11px}
+  .file-tool svg{width:15px;height:15px;display:block;flex:0 0 auto}
+  .file-row{display:flex;align-items:center;gap:9px;padding:10px 0;border-top:1px solid var(--line);
+    flex-wrap:wrap}
   .file-row:first-child{border-top:none}
   .file-main{display:flex;align-items:center;gap:9px;flex:1;min-width:0;cursor:pointer}
   .file-ico{width:30px;height:30px;border-radius:8px;background:var(--panel2);display:flex;
@@ -220,6 +261,10 @@
   #fileEditor{width:100%;height:48vh;resize:none;font:12px/1.55 var(--mono);
     background:#070a10;color:#dbe7f6;border:1px solid var(--line);border-radius:9px;padding:10px}
   #fileStorageFav:empty{display:none}
+  @media(max-width:390px){
+    .file-actions{flex:1 1 100%;justify-content:flex-end;padding-left:39px}
+    .file-nav button{padding-left:7px;padding-right:7px}
+  }
 </style>
 </head>
 <body>
@@ -426,23 +471,33 @@
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h7l2 2h9v11H3z"/></svg>板端文件
         <span id="fileState" class="dim" style="margin-left:auto;font-size:11px">未连接</span>
       </h2>
-      <div class="row2" style="margin-top:0">
-        <button class="ghost" id="btnFileUp" style="flex:0 0 auto">上级</button>
+      <div class="file-nav">
+        <button class="ghost" id="btnFileBack" title="返回浏览过的上一个目录"><span class="nav-ico">←</span><span>返回</span></button>
+        <button class="ghost" id="btnFileUp"><span class="nav-ico">↑</span><span>上级</span></button>
         <input id="filePath" class="file-path" value="/root" autocomplete="off"
-          autocapitalize="off" spellcheck="false" style="flex:1">
-        <button class="pri" id="btnFileGo" style="flex:0 0 auto">前往</button>
+          autocapitalize="off" spellcheck="false">
+        <button class="pri" id="btnFileGo"><span>前往</span><span aria-hidden="true">→</span></button>
       </div>
-      <div class="row2" style="flex-wrap:wrap">
-        <button class="ghost file-fav" data-path="/root">/root</button>
-        <button class="ghost file-fav" data-path="/home">/home</button>
-        <button class="ghost file-fav" data-path="/etc">/etc</button>
-        <button class="ghost file-fav" data-path="/var/log">/var/log</button>
+      <div class="file-shortcuts">
+        <div class="file-shortcut-head">快捷位置</div>
+        <div class="file-fav-grid">
+          <button class="ghost file-fav" data-path="/root">/root</button>
+          <button class="ghost file-fav" data-path="/home">/home</button>
+          <button class="ghost file-fav" data-path="/etc">/etc</button>
+          <button class="ghost file-fav" data-path="/var/log">/var/log</button>
+        </div>
+        <div id="fileStorageFav" class="file-storage-favs"></div>
       </div>
-      <div id="fileStorageFav" class="row2" style="flex-wrap:wrap"></div>
-      <div class="row2">
-        <button class="pri" id="btnFileUpload" style="flex:1">上传</button>
-        <button class="ghost" id="btnFileMkdir" style="flex:1">新建目录</button>
-        <button class="ghost" id="btnFileReload" style="flex:1">刷新</button>
+      <div id="fileClipboard" class="file-clipboard hide">
+        <span class="clip-ico" aria-hidden="true">⧉</span>
+        <div class="clip-info"><div class="clip-title">等待粘贴</div><div class="clip-name" id="fileClipboardName">--</div></div>
+        <button class="ghost" id="btnFileClipClear">清除</button>
+      </div>
+      <div class="file-toolbar">
+        <button class="pri file-tool" id="btnFileUpload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 15v4h14v-4"/></svg><span>上传</span></button>
+        <button class="ghost file-tool" id="btnFilePaste" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="7" width="11" height="13" rx="2"/><path d="M16 7V4H5v12h3"/></svg><span>粘贴</span></button>
+        <button class="ghost file-tool" id="btnFileMkdir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h7l2 2h9v11H3z"/><path d="M12 11v5M9.5 13.5h5"/></svg><span>新建</span></button>
+        <button class="ghost file-tool" id="btnFileReload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6v5h-5"/><path d="M18.5 15a7 7 0 1 1-.7-7.8L20 11"/></svg><span>刷新</span></button>
       </div>
       <div id="fileTransfer" class="transfer hide">
         <div class="kv"><b id="fileTransferName">传输</b><span id="fileTransferText">0%</span></div>
@@ -685,7 +740,7 @@ const ERR_HINT = {
   E_PROXY_SUB_NOTFOUND: "没有找到这个订阅",
   E_PROXY_SUB_ACTIVE: "当前订阅不能直接删除，请先应用另一个订阅",
   E_PROXY_SUB_SIZE: "保存的订阅数量已达到上限",
-  E_BUSY: "板端正忙（已有终端任务在跑），稍后再试",
+  E_BUSY: "板端正忙，请稍后再试",
   E_TIMEOUT: "板端执行超时",
   E_INTERNAL: "板端内部错误"
 };
@@ -1751,7 +1806,8 @@ $("#btnStorageReload").onclick = () => loadStorage(true);
 /* ============ 板端文件管理 ============ */
 let fileDir = "/root", fileRows = [], fileNext = 0, fileEof = true;
 let fileCaps = null, fileTransferBusy = false, fileInputResolve = null;
-let fileEditing = null, pendingDownload = null;
+let fileEditing = null, pendingDownload = null, fileClipboard = null;
+let fileHistory = [], fileHistoryIndex = -1;
 
 function fileJoin(dir, name) { return (dir === "/" ? "/" : dir + "/") + name; }
 function fileParent(path) {
@@ -1759,6 +1815,23 @@ function fileParent(path) {
   if (clean === "/") return "/";
   const at = clean.lastIndexOf("/");
   return at <= 0 ? "/" : clean.slice(0, at);
+}
+function paintFileNavigation() {
+  $("#btnFileBack").disabled = fileTransferBusy || fileHistoryIndex <= 0;
+  $("#btnFileUp").disabled = fileTransferBusy || fileDir === "/";
+}
+function paintFileClipboard() {
+  $("#fileClipboard").classList.toggle("hide", !fileClipboard);
+  $("#fileClipboardName").textContent = fileClipboard ? fileClipboard.name : "--";
+  $("#btnFilePaste").disabled = fileTransferBusy || !fileClipboard ||
+    (!!fileCaps && fileCaps.copy !== true);
+  $("#btnFileClipClear").disabled = fileTransferBusy;
+}
+function copyFileName(name, type) {
+  if (type === "dir") return name + " - 副本";
+  const dot = name.lastIndexOf(".");
+  if (dot > 0) return name.slice(0, dot) + " - 副本" + name.slice(dot);
+  return name + " - 副本";
 }
 function fmtBytes(n) {
   n = Number(n) || 0;
@@ -1779,8 +1852,9 @@ function fileProgress(label, done, total) {
 function setFileBusy(busy, state) {
   fileTransferBusy = busy;
   $("#fileState").textContent = state || (authed ? "就绪" : "未连接");
-  ["#btnFileUpload", "#btnFileMkdir", "#btnFileReload", "#btnFileGo", "#btnFileUp", "#btnFileMore"]
+  ["#btnFileUpload", "#btnFileMkdir", "#btnFileReload", "#btnFileGo", "#btnFileMore"]
     .forEach(id => { const node = $(id); if (node) node.disabled = busy; });
+  paintFileNavigation(); paintFileClipboard();
   renderFiles();
 }
 function fileAction(label, danger, handler) {
@@ -1820,6 +1894,8 @@ function renderFiles() {
     main.onclick = () => entry.type === "dir" ? loadFiles(path, false) : openTextFile(entry);
     const actions = document.createElement("div"); actions.className = "file-actions";
     if (entry.type === "file") actions.appendChild(fileAction("下载", false, () => downloadFile(entry)));
+    if (["file", "dir", "link"].includes(entry.type))
+      actions.appendChild(fileAction("复制", false, () => copyFileEntry(entry, path)));
     actions.appendChild(fileAction("改名", false, () => renameFile(entry)));
     actions.appendChild(fileAction("删除", true, () => removeFile(entry)));
     row.appendChild(main); row.appendChild(actions); box.appendChild(row);
@@ -1827,7 +1903,7 @@ function renderFiles() {
   $("#btnFileMore").classList.toggle("hide", fileEof || !fileRows.length);
 }
 
-async function loadFiles(path, append) {
+async function loadFiles(path, append, fromHistory) {
   if (!authed && isNative) { renderFiles(); return; }
   if (fileTransferBusy) return;
   if (gatewayCaps.length && !gatewayCaps.includes("file")) { renderFiles(); return; }
@@ -1838,16 +1914,25 @@ async function loadFiles(path, append) {
     const data = await send("file.list", { path: path || fileDir, offset: offset, limit: 24 }, 30000);
     fileDir = data.path || path || fileDir;
     $("#filePath").value = fileDir;
+    if (!append && !fromHistory && fileHistory[fileHistoryIndex] !== fileDir) {
+      fileHistory = fileHistory.slice(0, fileHistoryIndex + 1);
+      fileHistory.push(fileDir);
+      fileHistoryIndex = fileHistory.length - 1;
+    }
     fileRows = append ? fileRows.concat(data.entries || []) : (data.entries || []);
     fileNext = Number(data.next_offset) || fileRows.length;
     fileEof = !!data.eof;
     $("#fileState").textContent = fileRows.length + " 项";
+    paintFileNavigation(); paintFileClipboard();
     renderFiles();
+    return true;
   } catch (e) {
     $("#fileState").textContent = "读取失败";
     $("#fileList").innerHTML = "<div class='note warn'></div>";
     $("#fileList").firstChild.textContent = e.message;
     toast("文件列表失败：" + e.message);
+    paintFileNavigation(); paintFileClipboard();
+    return false;
   }
 }
 
@@ -1880,12 +1965,57 @@ $("#btnFileGo").onclick = () => loadFiles($("#filePath").value.trim() || "/", fa
 $("#filePath").addEventListener("keydown", e => {
   if (e.key === "Enter") { e.preventDefault(); $("#btnFileGo").click(); }
 });
+$("#btnFileBack").onclick = async () => {
+  if (fileTransferBusy || fileHistoryIndex <= 0) return;
+  const targetIndex = fileHistoryIndex - 1;
+  if (await loadFiles(fileHistory[targetIndex], false, true)) fileHistoryIndex = targetIndex;
+  paintFileNavigation();
+};
 $("#btnFileUp").onclick = () => loadFiles(fileParent(fileDir), false);
 $("#btnFileReload").onclick = () => loadFiles(fileDir, false);
 $("#btnFileMore").onclick = () => loadFiles(fileDir, true);
 document.querySelectorAll(".file-fav").forEach(button => {
   button.onclick = () => loadFiles(button.dataset.path, false);
 });
+$("#btnFileClipClear").onclick = () => {
+  fileClipboard = null; paintFileClipboard(); toast("已清除文件剪贴板");
+};
+function copyFileEntry(entry, path) {
+  if (fileCaps && fileCaps.copy !== true) {
+    toast("复制粘贴需要安装 v15 板端网关"); return;
+  }
+  fileClipboard = { path: path, name: entry.name, type: entry.type };
+  paintFileClipboard();
+  toast("已复制“" + entry.name + "”，请进入目标目录后点粘贴");
+}
+$("#btnFilePaste").onclick = async () => {
+  if (!fileClipboard || fileTransferBusy) return;
+  const source = fileClipboard.path.replace(/\/+$/, "") || "/";
+  const destinationDir = fileDir.replace(/\/+$/, "") || "/";
+  if (fileClipboard.type === "dir" &&
+      (destinationDir === source || destinationDir.startsWith(source + "/"))) {
+    toast("不能把目录粘贴到它自身或子目录中"); return;
+  }
+  let name = fileClipboard.name;
+  if (fileRows.some(entry => entry.name === name) || fileJoin(fileDir, name) === source) {
+    name = await askFileName("粘贴副本", "目标名称", copyFileName(name, fileClipboard.type));
+    if (!name) return;
+  }
+  const target = fileJoin(fileDir, name);
+  if (target === source) { toast("源文件和目标文件相同"); return; }
+  setFileBusy(true, "复制中…");
+  try {
+    await send("file.copy", { path: source, target: target }, 600000);
+    setFileBusy(false, "就绪");
+    toast("已粘贴“" + name + "”");
+    await loadFiles(fileDir, false);
+  } catch (e) {
+    toast("粘贴失败：" + e.message);
+  } finally {
+    if (fileTransferBusy) setFileBusy(false);
+  }
+};
+paintFileNavigation(); paintFileClipboard();
 $("#btnFileMkdir").onclick = async () => {
   const name = await askFileName("新建目录", "目录名", "");
   if (!name) return;
@@ -1899,15 +2029,19 @@ async function renameFile(entry) {
   const name = await askFileName("重命名", "新名称", entry.name);
   if (!name || name === entry.name) return;
   try {
-    await send("file.rename", { path: fileJoin(fileDir, entry.name), target: fileJoin(fileDir, name) });
+    const source = fileJoin(fileDir, entry.name);
+    await send("file.rename", { path: source, target: fileJoin(fileDir, name) });
+    if (fileClipboard && fileClipboard.path === source) fileClipboard = null;
     toast("已重命名"); loadFiles(fileDir, false);
   } catch (e) { toast("重命名失败：" + e.message); }
 }
 async function removeFile(entry) {
   const kind = entry.type === "dir" ? "空目录" : "文件";
-  if (!await confirmWord("删除" + kind, "将永久删除 " + fileJoin(fileDir, entry.name) + "。目录必须为空。", "DELETE")) return;
+  const path = fileJoin(fileDir, entry.name);
+  if (!await confirmWord("删除" + kind, "将永久删除 " + path + "。目录必须为空。", "DELETE")) return;
   try {
-    await send("file.remove", { path: fileJoin(fileDir, entry.name), confirm: "DELETE" });
+    await send("file.remove", { path: path, confirm: "DELETE" });
+    if (fileClipboard && fileClipboard.path === path) fileClipboard = null;
     toast("已删除"); loadFiles(fileDir, false);
   } catch (e) { toast("删除失败：" + e.message); }
 }
@@ -2586,38 +2720,54 @@ function onTermData(sourceTab, d) {
   shellSendText(out);
 }
 
-const KB_KEYS = [
-  { t: "ESC", s: "\x1b" }, { t: "^C", s: "\x03" }, { t: "^D", s: "\x04" },
-  { t: "TAB", s: "\t" }, { t: "^Z", s: "\x1a" },
-  { t: "CTRL", sticky: "ctrl" }, { t: "ALT", sticky: "alt" },
-  { t: "↑", s: "\x1b[A" }, { t: "↓", s: "\x1b[B" },
-  { t: "←", s: "\x1b[D" }, { t: "→", s: "\x1b[C" },
-  { t: "HOME", s: "\x1b[H" }, { t: "END", s: "\x1b[F" },
-  { t: "PGUP", s: "\x1b[5~" }, { t: "PGDN", s: "\x1b[6~" },
-  { t: "|", s: "|" }, { t: "/", s: "/" }, { t: "~", s: "~" }, { t: "-", s: "-" }
+const KB_GROUPS = [
+  { cls: "kb-control", label: "控制键", keys: [
+    { t: "ESC", s: "\x1b" }, { t: "^C", s: "\x03" }, { t: "^D", s: "\x04" },
+    { t: "TAB", s: "\t" }, { t: "^Z", s: "\x1a" },
+    { t: "CTRL", sticky: "ctrl" }, { t: "ALT", sticky: "alt" }
+  ]},
+  { cls: "kb-nav", label: "方向键", keys: [
+    { t: "↑", s: "\x1b[A" }, { t: "↓", s: "\x1b[B" },
+    { t: "←", s: "\x1b[D" }, { t: "→", s: "\x1b[C" }
+  ]},
+  { cls: "kb-move", label: "翻页键", keys: [
+    { t: "HOME", s: "\x1b[H" }, { t: "END", s: "\x1b[F" },
+    { t: "PGUP", s: "\x1b[5~" }, { t: "PGDN", s: "\x1b[6~" }
+  ]},
+  { cls: "kb-symbol", label: "常用符号", keys: [
+    { t: "|", s: "|" }, { t: "/", s: "/" }, { t: "~", s: "~" }, { t: "-", s: "-" }
+  ]}
 ];
+const KB_KEYS = [].concat.apply([], KB_GROUPS.map(group => group.keys));
 
 function buildKb() {
   const box = $("#kbBar");
   box.innerHTML = "";
-  KB_KEYS.forEach(k => {
-    const b = document.createElement("button");
-    b.className = "ghost";
-    b.dataset.k = k.t;
-    b.textContent = k.t;
-    b.onclick = () => {
-      if (k.sticky) {
-        sticky = (sticky === k.sticky) ? null : k.sticky;
-        paintSticky();
-        toast(sticky ? (k.t + " 已锁定：再按一个键生效，再点一次取消") : "已取消修饰键");
-        return;
-      }
-      const tab = activeTerminalTab();
-      if (!tab || tab.state !== "running") { toast("先点「启动 Shell 会话」"); return; }
-      shellSendText(k.s);
-      try { term.focus(); } catch (e) { }
-    };
-    box.appendChild(b);
+  KB_GROUPS.forEach(group => {
+    const wrap = document.createElement("div");
+    wrap.className = "kb-group " + group.cls;
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", group.label);
+    group.keys.forEach(k => {
+      const b = document.createElement("button");
+      b.className = "ghost";
+      b.dataset.k = k.t;
+      b.textContent = k.t;
+      b.onclick = () => {
+        if (k.sticky) {
+          sticky = (sticky === k.sticky) ? null : k.sticky;
+          paintSticky();
+          toast(sticky ? (k.t + " 已锁定：再按一个键生效，再点一次取消") : "已取消修饰键");
+          return;
+        }
+        const tab = activeTerminalTab();
+        if (!tab || tab.state !== "running") { toast("先点「启动 Shell 会话」"); return; }
+        shellSendText(k.s);
+        try { term.focus(); } catch (e) { }
+      };
+      wrap.appendChild(b);
+    });
+    box.appendChild(wrap);
   });
 }
 function paintSticky() {
@@ -2988,7 +3138,7 @@ function startDemo() {
     if (m.name === "proxy.sub.apply") return ok({ id: m.args.id, applied: true, group: "PROXY" });
     if (m.name === "proxy.sub.remove") return ok({ id: m.args.id, removed: true });
     if (m.name === "file.caps") return ok({ root: "/", chunk_bytes: 1536,
-      max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true });
+      max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true, copy: true });
     if (m.name === "file.list") {
       const rows = m.args.path === "/root" ? [
         { name: "projects", type: "dir", size: 4096, mtime: 1760270400, mode: "0755" },
