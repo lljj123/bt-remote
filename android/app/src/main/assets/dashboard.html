@@ -31,6 +31,10 @@
   header{position:sticky;top:0;z-index:10;background:var(--bg);
     padding:10px 12px 8px;margin:0 -12px 8px;border-bottom:1px solid var(--line)}
   .bar{display:flex;align-items:center;gap:8px}
+  header.conn-collapsed{padding:4px 12px;margin-bottom:4px;border-bottom:none;background:transparent;pointer-events:none}
+  header.conn-collapsed .bar{justify-content:flex-end}
+  header.conn-collapsed .bar>:not(#btnFold){display:none}
+  header.conn-collapsed #btnFold{padding:4px 6px!important;background:var(--panel);pointer-events:auto}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
   .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.18)}
   .dot.busy{background:var(--warn)}
@@ -49,10 +53,12 @@
   input{width:100%}
 
   /* 标签页 */
-  nav{display:flex;margin:0 -12px 14px;padding:0 4px;overflow-x:auto;
-    border-bottom:1px solid var(--line)}
-  nav button{flex:1 1 0;min-width:0;background:transparent;border:none;color:var(--muted);
-    padding:9px 2px 11px;border-radius:0;font-size:13px;position:relative;
+  nav{display:flex;gap:4px;margin:0 -12px 14px;padding:0 8px;overflow-x:auto;
+    border-bottom:1px solid var(--line);scrollbar-width:none;touch-action:pan-x;
+    overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+  nav::-webkit-scrollbar{display:none}
+  nav button{flex:0 0 76px;min-width:76px;background:transparent;border:none;color:var(--muted);
+    padding:9px 8px 11px;border-radius:0;font-size:13px;position:relative;
     display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap}
   nav button svg{width:15px;height:15px;display:block;flex:0 0 auto}
   nav button.active{color:var(--text);font-weight:500}
@@ -142,8 +148,9 @@
   .hide{display:none}
 
   /* 终端全屏 */
-  #tab-tty.fs{position:fixed;inset:0;z-index:80;background:var(--bg);overflow:hidden;padding:10px 12px}
-  #tab-tty.fs .card{max-width:none;height:100%;display:flex;flex-direction:column;margin-bottom:0}
+  #tab-tty.fs{position:fixed;inset:0;z-index:80;background:var(--bg);overflow:hidden;padding:5px 6px}
+  #tab-tty.fs .card{max-width:none;height:100%;display:flex;flex-direction:column;margin-bottom:0;padding:5px}
+  #tab-tty.fs .card>h2{display:none!important}
   #termWrap{height:46vh;min-height:240px;max-height:520px;overflow:hidden;
     overscroll-behavior:contain;background:#070a10;border-radius:8px}
   #termWrap .xterm-viewport{overscroll-behavior-y:contain;touch-action:pan-y;
@@ -152,6 +159,10 @@
   #termWrap.selecting{box-shadow:0 0 0 2px var(--accent)}
   #tab-tty.fs #termWrap{flex:1;height:auto;max-height:none;min-height:0}
   #tab-tty.fs #ttyShellWrap{flex:1;min-height:0;display:flex;flex-direction:column}
+  #tab-tty.fs #ttyShellWrap>:not(#termWrap):not(#kbBar):not(#ttyActions){display:none!important}
+  #tab-tty.fs #ttyActions{display:flex;margin-top:4px;justify-content:flex-end}
+  #tab-tty.fs #ttyActions>:not(#btnShFull){display:none}
+  #tab-tty.fs #btnShFull{flex:0 0 auto!important;padding:3px 7px!important;font-size:10px;line-height:1.2}
   .term-tools{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
   .term-tools button{flex:1;min-width:64px;padding:6px 8px;font-size:12px}
   .term-tools button.active{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -261,13 +272,6 @@
       <div class="kv"><b>负载</b><span id="iLoad">--</span></div>
     </div>
 
-    <div class="card" id="customInfoCard">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 9l2 2-2 2M12 13h4"/></svg>自定义系统信息
-        <button class="ghost" id="btnCustomInfo" style="margin-left:auto;padding:4px 9px">刷新</button>
-      </h2>
-      <div id="customInfoList"><div class="dim" style="font-size:12px">连接后通过 term.exec 获取</div></div>
-    </div>
-
     <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络接口</h2>
       <div id="ifaceList"></div>
@@ -288,7 +292,10 @@
 
     <div class="card">
       <h2>进程 Top</h2>
-      <table id="tblTop"><tbody></tbody></table>
+      <table id="tblTop">
+        <thead><tr><th>进程</th><th class="r">PID</th><th class="r">CPU</th><th class="r">内存</th></tr></thead>
+        <tbody></tbody>
+      </table>
     </div>
   </section>
 
@@ -300,7 +307,10 @@
         <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
       </div>
       <div class="fold-body">
-        <button class="ghost" id="btnSvcReload" style="margin:4px 0 6px">刷新</button>
+        <div class="bar" style="margin:4px 0 6px">
+          <button class="ghost" id="btnSvcReload">刷新</button>
+          <span class="dim" id="svcCount" style="font-size:11px;margin-left:auto">--</span>
+        </div>
         <div id="svcList"></div>
       </div>
     </div>
@@ -472,16 +482,11 @@
         <div class="dim hide" id="termSelectHint" style="font-size:11px;margin-top:5px">
           选择模式：在终端文字上拖动；完成后点“复制”。再次点“选择”可退出。
         </div>
-        <div class="row2" style="margin-top:8px">
+        <div class="row2" id="ttyActions" style="margin-top:8px">
           <button class="pri" id="btnShStart" style="flex:1">启动 Shell 会话</button>
           <button class="ghost" id="btnShClose" style="flex:1">结束会话</button>
           <button class="ghost" id="btnShFit" style="flex:0 0 auto">适配</button>
           <button class="ghost" id="btnShFull" style="flex:0 0 auto">全屏</button>
-        </div>
-        <div class="dim" style="font-size:11px;margin-top:8px">
-          root 权限的交互式 bash，和 SSH 上去一样。点终端区域唤起键盘；
-          软键盘打不出的键（Tab、方向键、Ctrl 组合）用按键栏，CTRL/ALT 是粘滞键；
-          复制时先点“选择”再拖动，粘贴使用 Android 系统剪贴板。
         </div>
       </div>
 
@@ -604,7 +609,7 @@ let pollTimer = null, infoTimer = null, subOk = false;
 let wantConnected = false, retryTimer = null, retryStep = 0;
 let following = false, followUnit = "";
 let devInfo = null, devInfoAt = 0;
-let gatewayCaps = [], terminalCaps = null, execAvailable = null;
+let gatewayCaps = [];
 const cpuHist = [], memHist = [];
 let lastMetrics = null;
 
@@ -677,12 +682,14 @@ $("#token").addEventListener("change", e => {
   } else localStorage.setItem("btr.token", token);
 });
 
-/* ---- 连接信息折叠 ---- */
-let connFolded = !token;   // token 为空时默认展开，方便首次填写
+/* ---- 连接信息折叠：鉴权成功后收成右上角一个按钮 ---- */
+let connFolded = false;
 function setConnFold(folded) {
   connFolded = folded;
+  document.querySelector("header").classList.toggle("conn-collapsed", folded);
   $("#connMore").classList.toggle("hide", folded);
   $("#foldIcon").style.transform = folded ? "" : "rotate(180deg)";
+  $("#btnFold").setAttribute("aria-label", folded ? "展开连接栏" : "收起连接栏");
 }
 $("#btnFold").onclick = () => setConnFold(!connFolded);
 setConnFold(connFolded);
@@ -721,16 +728,15 @@ function feed(line) {
       resetShell();
       authed = true; connected = true; wantConnected = true; retryStep = 0;
       gatewayCaps = Array.isArray(m.caps) ? m.caps.slice() : [];
-      terminalCaps = null; execAvailable = null;
       $("#btnConn").textContent = "断开";
       setConn("on", "已连接");
+      setConnFold(true);
       toast("鉴权通过");
       startStream();
       loadSysInfo();
       loadOverview();
       refreshServices();
       loadProxy(false);
-      loadCapabilities().then(loadCustomInfo);
       if (curTab === "file") loadFiles(fileDir, false);
       if (curTab === "dev") loadUsbDevices(true);
       /* 每次重建连接，终端相位都是干净的（裸相位不会跨连接存活） */
@@ -854,11 +860,12 @@ function onState(state, info) {
   } else if (state === "disconnected" || state === "error") {
     connecting = false;
     connected = false; authed = false;
-    gatewayCaps = []; terminalCaps = null; execAvailable = null;
+    gatewayCaps = [];
     fileCaps = null;
     networkIfaces = []; usbRows = []; usbNext = 0; usbEof = true;
     stopStream(); clearPending(); stopFollow();
     resetShell();                 // 裸相位不会跨连接存活，必须复位
+    setConnFold(false);
     renderFiles();
     if (state === "error") {
       setConn("err", "连接失败"); toast(info);
@@ -1018,69 +1025,6 @@ async function loadSysInfo() {
   } catch (e) { }
 }
 
-/*
- * 只改这里就能增删“自定义系统信息”，网关无需再加专用命令。
- * term.exec 是已鉴权的 root 单次命令；命令应保持只读、快速、输出简短。
- */
-const CUSTOM_INFO_COMMANDS = [
-  { label: "系统架构", command: "uname -m" },
-  { label: "CPU 核心", command: "nproc" },
-  { label: "主 IP", command: "hostname -I | awk '{print $1}'" },
-  { label: "登录用户", command: "who | wc -l" }
-];
-
-async function loadCapabilities() {
-  if (!authed) return null;
-  try {
-    terminalCaps = await send("term.caps");
-    execAvailable = !!(terminalCaps.exec && terminalCaps.exec.name === "term.exec");
-  } catch (e) {
-    terminalCaps = null;
-    execAvailable = false;
-  }
-  return terminalCaps;
-}
-
-function execText(result) {
-  if (!result || !result.output_b64) return "";
-  try { return new TextDecoder("utf-8").decode(b64ToU8(result.output_b64)); }
-  catch (e) { return ""; }
-}
-
-async function loadCustomInfo() {
-  const box = $("#customInfoList");
-  if (!authed) return;
-  if (execAvailable == null) await loadCapabilities();
-  if (!execAvailable) {
-    box.innerHTML = "<div class='note warn'>当前板端没有 term.exec，请先升级网关。</div>";
-    return;
-  }
-  box.innerHTML = "";
-  for (const item of CUSTOM_INFO_COMMANDS) {
-    const row = document.createElement("div");
-    row.className = "kv";
-    const key = document.createElement("b");
-    const value = document.createElement("span");
-    key.textContent = item.label;
-    value.textContent = "读取中…";
-    row.appendChild(key); row.appendChild(value); box.appendChild(row);
-    try {
-      const result = await send("term.exec", {
-        command: item.command, timeout_s: 8, max_output_bytes: 1024
-      }, 12000);
-      const text = execText(result).trim().replace(/\s+/g, " ");
-      value.textContent = text || (result.timed_out ? "超时" : "--");
-      if (result.exit_code !== 0 || result.timed_out) value.style.color = "var(--warn)";
-      value.title = item.command;
-    } catch (e) {
-      value.textContent = "读取失败";
-      value.style.color = "var(--bad)";
-      value.title = e.message;
-    }
-  }
-}
-$("#btnCustomInfo").onclick = loadCustomInfo;
-
 function uptimeSec() {
   if (!devInfo) return null;
   return (devInfo.uptime_s || 0) + Math.floor((Date.now() - devInfoAt) / 1000);
@@ -1212,28 +1156,56 @@ function esc(s) {
 const SVC_ACTIONS = ["start", "stop", "restart", "enable", "disable"];
 const ACT_LABEL = { start: "启动", stop: "停止", restart: "重启", enable: "自启", disable: "禁自启" };
 const DANGEROUS = { "ssh.service": ["stop", "disable"] };
+let svcRefreshEpoch = 0;
 
 async function refreshServices() {
   if (!authed) return;
+  const epoch = ++svcRefreshEpoch;
+  const reload = $("#btnSvcReload");
+  reload.disabled = true;
+  reload.textContent = "刷新中…";
+  $("#svcCount").textContent = "正在读取";
   try {
-    const list = await send("svc.list");
+    const list = [];
+    let offset = 0, total = 0;
+    for (let pageNo = 0; pageNo < 256; pageNo++) {
+      const page = await send("svc.list", { offset: offset, limit: 8, refresh: offset === 0 }, 20000);
+      if (epoch !== svcRefreshEpoch) return;
+      if (Array.isArray(page)) {
+        list.push.apply(list, page);
+        total = list.length;
+        break;
+      }
+      if (!page || !Array.isArray(page.services) || page.truncated)
+        throw new Error("板端返回了不完整的服务分页");
+      list.push.apply(list, page.services);
+      total = Number(page.total) || list.length;
+      if (page.eof) break;
+      const next = Number(page.next_offset);
+      if (!Number.isFinite(next) || next <= offset) throw new Error("服务分页游标无效");
+      offset = next;
+    }
+    if (epoch !== svcRefreshEpoch) return;
     const box = $("#svcList");
     box.innerHTML = "";
+    $("#svcCount").textContent = list.length + (total > list.length ? " / " + total : "") + " 项";
+    if (!list.length) box.innerHTML = "<div class='dim' style='font-size:12px'>（没有发现系统服务）</div>";
     (list || []).forEach(u => {
       const div = document.createElement("div");
       div.className = "li";
       const cls = u.active === "active" ? "ok" : (u.active === "failed" ? "bad" : "off");
       let acts = "";
-      SVC_ACTIONS.forEach(a => {
-        acts += "<button data-u='" + esc(u.unit) + "' data-a='" + a + "'>" + ACT_LABEL[a] + "</button>";
-      });
+      const managed = u.managed !== false;
+      if (managed) SVC_ACTIONS.forEach(a => {
+          acts += "<button data-u='" + esc(u.unit) + "' data-a='" + a + "'>" + ACT_LABEL[a] + "</button>";
+        });
       div.innerHTML =
         "<div class='nm'>" + esc(u.unit) +
         (u.desc ? "<div class='sub'>" + esc(u.desc) + "</div>" : "") + "</div>" +
         "<span class='pill " + cls + "'>" + esc(u.active) + "</span>" +
         "<span class='pill " + (u.enabled === "enabled" ? "ok" : (u.enabled === "masked" ? "bad" : "off")) + "'>" +
         esc(u.enabled) + "</span>" +
-        "<span class='acts'>" + acts + "</span>";
+        (managed ? "<span class='acts'>" + acts + "</span>" : "<span class='pill off'>只读</span>");
       box.appendChild(div);
     });
     box.querySelectorAll("button").forEach(b => {
@@ -1254,7 +1226,18 @@ async function refreshServices() {
         refreshServices();
       };
     });
-  } catch (e) { toast("服务列表获取失败：" + e.message); }
+    toast("服务已刷新，共 " + list.length + " 项");
+  } catch (e) {
+    if (epoch === svcRefreshEpoch) {
+      $("#svcCount").textContent = "刷新失败";
+      toast("服务列表获取失败：" + e.message);
+    }
+  } finally {
+    if (epoch === svcRefreshEpoch) {
+      reload.disabled = false;
+      reload.textContent = "刷新";
+    }
+  }
 }
 $("#btnSvcReload").onclick = refreshServices;
 
@@ -2026,6 +2009,8 @@ function switchTab(name) {
   document.querySelectorAll("nav button").forEach(x => {
     x.classList.toggle("active", x.dataset.tab === name);
   });
+  const activeTab = document.querySelector('nav button[data-tab="' + name + '"]');
+  if (activeTab) activeTab.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
   TAB_ORDER.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== name));
   if (name !== "tty") setTtyFull(false);   // 切走终端页时退出全屏
   if (name === "svc") { refreshServices(); loadProxy(false); }
@@ -2447,7 +2432,7 @@ function setTtyFull(full) {
   $("#tab-tty").classList.toggle("fs", full);
   document.body.style.overflow = full ? "hidden" : "";
   $("#btnShFull").textContent = full ? "退出全屏" : "全屏";
-  if (full) setTimeout(fitTerm, 80);
+  setTimeout(fitTerm, 80);
 }
 $("#btnShFull").onclick = () => setTtyFull(!ttyFull);
 

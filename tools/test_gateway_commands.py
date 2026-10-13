@@ -131,6 +131,37 @@ class GatewayCommandTests(unittest.TestCase):
         FakeMihomo.mode = "rule"
         FakeMihomo.selected = "node-a"
 
+    def test_service_discovery_and_paginated_listing(self):
+        discovered = ["bt-gateway.service", "bluetooth.service", "new-worker.service"]
+        props = {
+            name: {"Description": name + " description", "ActiveState": "active",
+                   "UnitFileState": "enabled", "MemoryCurrent": "4096"}
+            for name in discovered
+        }
+        with mock.patch.object(GATEWAY, "service_units", return_value=discovered), \
+                mock.patch.object(GATEWAY, "unit_props", return_value=props):
+            first = GATEWAY.cmd_svc_list(None, {"offset": 0, "limit": 2, "refresh": True})
+            second = GATEWAY.cmd_svc_list(None, {"offset": 2, "limit": 2})
+        self.assertEqual(first["total"], 3)
+        self.assertFalse(first["eof"])
+        self.assertEqual(first["next_offset"], 2)
+        self.assertTrue(first["services"][0]["managed"])
+        self.assertEqual(second["services"][0]["unit"], "new-worker.service")
+        self.assertFalse(second["services"][0]["managed"])
+        self.assertTrue(second["eof"])
+
+    def test_service_unit_discovery_reads_installed_and_loaded_units(self):
+        GATEWAY._svc_units_cache = (0.0, [])
+        outputs = [
+            (0, "new-worker.service enabled enabled\n", ""),
+            (0, "● failed-extra.service loaded failed failed Example\n", ""),
+        ]
+        with mock.patch.object(GATEWAY, "run", side_effect=outputs):
+            units = GATEWAY.service_units(refresh=True)
+        self.assertIn("new-worker.service", units)
+        self.assertIn("failed-extra.service", units)
+        self.assertTrue(set(GATEWAY.SVC_WHITELIST).issubset(units))
+
     def test_proxy_status_switch_mode_and_delay(self):
         status = GATEWAY.cmd_proxy_status(None, {})
         self.assertTrue(status["configured"])

@@ -117,6 +117,8 @@ SVC_WHITELIST = [
 ]
 SVC_ACTIONS = ("start", "stop", "restart", "enable", "disable")
 DANGEROUS_SVC = {("ssh.service", "stop"), ("ssh.service", "disable")}
+SVC_PAGE_MAX = 8
+SVC_CACHE_SECS = 15.0
 
 UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:\\-]{0,127}$")
 IFACE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,63}$")
@@ -828,10 +830,12 @@ def cmd_dev_ping(_s, _a):
 def unit_props(units):
     """systemctl show 批量取属性（空行分块）。"""
     out = {}
+    if not units:
+        return out
     rc, txt, _ = run(["systemctl", "show", "-p", "Id", "-p", "Description",
                       "-p", "ActiveState", "-p", "UnitFileState",
                       "-p", "MemoryCurrent"] + list(units), timeout=15)
-    if rc != 0:
+    if rc != 0 and not txt:
         return out
     for block in txt.split("\n\n"):
         cur = {}
@@ -845,6 +849,45 @@ def unit_props(units):
     return out
 
 
+_svc_units_cache = (0.0, [])
+
+
+def service_units(refresh=False):
+    """Return every installed or currently loaded service unit in stable order."""
+    global _svc_units_cache
+    now = time.monotonic()
+    cached_at, cached = _svc_units_cache
+    if not refresh and cached and now - cached_at < SVC_CACHE_SECS:
+        return list(cached)
+
+    units = set(SVC_WHITELIST)
+    commands = [
+        ["systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager"],
+        ["systemctl", "list-units", "--type=service", "--all", "--no-legend",
+         "--no-pager", "--plain"],
+    ]
+    for command in commands:
+        rc, text, _ = run(command, timeout=15)
+        if rc != 0 and not text:
+            continue
+        for line in text.splitlines():
+            # Failed units may be prefixed with a bullet; inspect the first two fields.
+            for field in line.split()[:2]:
+                if field.endswith(".service") and UNIT_RE.fullmatch(field):
+                    units.add(field)
+                    break
+    ordered = sorted(units, key=lambda unit: (unit not in SVC_WHITELIST, unit.lower()))
+    _svc_units_cache = (now, ordered)
+    return list(ordered)
+
+
+def _utf8_prefix(value, max_bytes):
+    raw = str(value or "").encode("utf-8")
+    if len(raw) <= max_bytes:
+        return raw.decode("utf-8")
+    return raw[:max_bytes].decode("utf-8", "ignore").rstrip() + "…"
+
+
 def _svc_row(unit, props):
     p = props.get(unit, {})
     rss = p.get("MemoryCurrent", "")
@@ -853,15 +896,31 @@ def _svc_row(unit, props):
     except Exception:
         rss_kb = None
     return {"unit": unit,
-            "desc": p.get("Description", ""),
+            "desc": _utf8_prefix(p.get("Description", ""), 192),
             "active": p.get("ActiveState", "unknown"),
             "enabled": p.get("UnitFileState", "unknown"),
-            "rss_kb": rss_kb}
+            "rss_kb": rss_kb,
+            "managed": unit in SVC_WHITELIST}
 
 
-def cmd_svc_list(_s, _a):
-    props = unit_props(SVC_WHITELIST)
-    return [_svc_row(u, props) for u in SVC_WHITELIST]
+def cmd_svc_list(_s, a):
+    # Compatibility: old clients expect a bare array and know only the managed units.
+    if not isinstance(a, dict) or "offset" not in a:
+        props = unit_props(SVC_WHITELIST)
+        return [_svc_row(u, props) for u in SVC_WHITELIST]
+
+    try:
+        offset = max(0, int(a.get("offset", 0)))
+        limit = max(1, min(int(a.get("limit", SVC_PAGE_MAX)), SVC_PAGE_MAX))
+    except (TypeError, ValueError):
+        raise CmdError("E_ARGS", "offset and limit must be integers")
+    units = service_units(bool(a.get("refresh", False)))
+    page = units[offset:offset + limit]
+    props = unit_props(page)
+    rows = [_svc_row(unit, props) for unit in page]
+    next_offset = offset + len(rows)
+    return {"services": rows, "offset": offset, "next_offset": next_offset,
+            "eof": next_offset >= len(units), "total": len(units)}
 
 
 def cmd_svc_act(_s, a):

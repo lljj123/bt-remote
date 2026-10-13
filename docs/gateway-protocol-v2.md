@@ -33,6 +33,19 @@
 {"interactive_root":true,"restricted":false,"protocols":["escaped-v1","json-mux-v1"],"shells":["/bin/bash","/bin/sh","/bin/dash"],"allow":["*"],"max_out_kb":2,"exec":{"name":"term.exec","max_command_bytes":2048,"max_output_bytes":2048,"timeout_s_max":120}}
 ```
 
+## 系统服务分页
+
+带 `offset` 的 `svc.list` 会重新发现已安装或已加载的 systemd service，并分页返回，
+避免全部服务超过单帧 4096 字节限制。第一页可传 `refresh=true` 清除短时发现缓存：
+
+```json
+{"name":"svc.list","args":{"offset":0,"limit":8,"refresh":true}}
+```
+
+响应为 `services/offset/next_offset/eof/total`。每个服务的 `managed` 表示它是否在
+网关操作白名单内；`managed=false` 只允许查看，`svc.act` 仍会拒绝对它进行启停或
+自启修改。省略 `offset` 时仍返回旧版白名单数组，以兼容旧 APK。
+
 ## Mihomo 代理
 
 板端环境变量：
