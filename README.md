@@ -1,6 +1,6 @@
 # bt-remote · 香橙派蓝牙管理网关
 
-Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS，无需板子接入互联网。支持系统指标、服务管理、多无线网卡 Netplan 配置、USB 外设查看、RTC 设置、mihomo 代理控制、App 内文件管理、交互 root 终端和单次 `term.exec` 命令。
+Android 手机通过经典蓝牙 SPP 管理 Orange Pi 3 LTS。支持系统指标、多无线网卡 Netplan 配置、磁盘/U 盘挂载与文件访问、USB 外设查看、RTC 设置、mihomo 订阅与代理控制、App 内文件管理、交互 root 终端和单次 `term.exec` 命令。
 
 原创代码使用 **Apache-2.0**，第三方代码保留原许可证，详见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
@@ -77,17 +77,18 @@ BTG_DEV_NAME="Orange Pi Bluetooth Gateway"
 BTG_MIHOMO_API=http://127.0.0.1:9090
 BTG_MIHOMO_SECRET_FILE=/etc/mihomo/secret
 BTG_MIHOMO_GROUP=PROXY
+BTG_MIHOMO_CONFIG=/etc/mihomo/config.yaml
 ```
 
-代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件和 Selector 策略组，随后执行 `sudo bt-remote restart`。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
+代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件、Selector 策略组和配置文件路径，随后执行 `sudo bt-remote restart`。App 可保存至多 12 个 Mihomo/Clash proxy-provider 订阅并选择应用；写入前会备份原配置到 `/etc/bt-gateway/mihomo-backups/`，控制器拒绝重载时自动恢复。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
 
 网关提供通用 `term.exec`，可在协议台中执行临时系统查询，不必再为每个查询增加专用网关命令。`term.exec` 与交互终端一样拥有 root 权限，具体协议见 [网关协议 v2](docs/gateway-protocol-v2.md)。App 概览不额外显示“自定义系统信息”卡片。
 
 App 的“文件”页可浏览板端目录、上传、下载、新建目录、重命名、删除空目录或文件，以及预览和编辑小型 UTF-8 文本。传输按 1536 字节分块；上传先写同目录临时文件，SHA256 校验成功后原子替换，断线时清理临时文件。Android 通过系统文件选择器访问手机文件，不申请整个存储空间权限。日志协议和板端 `bt-remote logs` 仍保留，但 App 不显示独立日志选项卡。
 
-“网络”页枚举当前所有接口，并把板载无线和 USB 无线网卡分别标识。选择任意已被内核驱动识别的无线接口后，可用该接口扫描、连接和忘记 WiFi；所选接口会作为独立 Netplan `wifis` 条目写入，不覆盖其它无线接口。“外设”页从 sysfs 读取 USB 型号、VID:PID、速率、驱动及关联的网卡、磁盘和串口。它只查看设备，不提供 USB 断电或卸载操作。
+“网络”页枚举当前所有接口，并把板载无线和 USB 无线网卡分别标识。选择任意已被内核驱动识别的无线接口后，可用该接口扫描、连接和忘记 WiFi；所选接口会作为独立 Netplan `wifis` 条目写入，不覆盖其它无线接口。“外设”页从 sysfs 读取 USB 型号、VID:PID、速率、驱动及关联的网卡、磁盘和串口。
 
-“服务”页通过分页读取板端当前已安装或已加载的全部 systemd service，刷新时会重新发现新增服务。为避免误停关键系统组件，只有网关白名单中的服务显示启停、自启操作，其余服务以只读方式展示状态。
+概览页通过 `lsblk` 显示板载闪存、系统盘、分区和 USB 存储。未挂载且有文件系统的分区可挂载到 `/mnt/bt-remote/`；挂载成功后会出现在“文件”页快捷入口，可浏览、上传、下载和编辑文件。FAT/exFAT 等不支持 POSIX 权限位的文件系统会跳过 `chmod`，仍保留原子替换流程。“服务”页不再列出 systemd 服务，只显示代理和电源/RTC 控制。
 
 WiFi 修改功能只支持已有 Netplan 配置，不会把 NetworkManager 或其他网络后端自动迁移到 Netplan。USB 无线网卡仍需系统内核具备对应驱动/固件；若“外设”页可见但没有驱动和网卡名，需先解决板端驱动。默认 Netplan 配置文件不存在时仍可使用系统信息、终端等功能；请先明确实际网络配置再启用 WiFi 修改。
 

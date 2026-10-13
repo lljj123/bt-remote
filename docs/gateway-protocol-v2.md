@@ -3,10 +3,10 @@
 本文只描述 v1 基础协议之上的新增命令。传输仍为 UTF-8 NDJSON，认证、
 4096 字节帧上限、响应 `id` 匹配和 `escaped-v1` 终端相位均保持不变。
 
-认证成功后的 `caps` 包括 `proxy`、`file` 和 `device`：
+认证成功后的 `caps` 包括 `proxy`、`file`、`device` 和 `storage`：
 
 ```json
-{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy","file","device","multiwifi"]}
+{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy","file","device","storage","multiwifi"]}
 ```
 
 ## 单次通用命令
@@ -53,6 +53,7 @@
 - `BTG_MIHOMO_API`：external-controller，例如 `http://127.0.0.1:9090`。
 - `BTG_MIHOMO_SECRET_FILE`：包含 controller secret 的 root 可读文件。
 - `BTG_MIHOMO_GROUP`：App 控制的 Selector 策略组；留空时网关尝试选择常见组名。
+- `BTG_MIHOMO_CONFIG`：需要持久修改的 Mihomo YAML 配置路径。
 - `BTG_MIHOMO_TEST_URL`：节点延迟测试 URL。
 
 未配置 `BTG_MIHOMO_API` 时，`proxy.status` 正常返回 `configured=false`，
@@ -89,6 +90,17 @@
 代理修改和延迟测试使用互斥锁；冲突返回 `E_BUSY`。controller 相关错误码为
 `E_PROXY_AUTH/CONFIG/CONNECT/DATA/HTTP/NOTFOUND/SIZE/TIMEOUT`。
 
+### 订阅链接
+
+- `proxy.sub.list {}`：返回已保存订阅的名称、脱敏 URL 提示及当前选择，不返回完整链接。
+- `proxy.sub.save {"name":"机场 A","url":"https://..."}`：保存订阅，最多 12 个。
+- `proxy.sub.apply {"id":"..."}`：写入专用 `bt-remote-subscription` proxy-provider，并把 provider 加入选定策略组。
+- `proxy.sub.remove {"id":"..."}`：删除非当前订阅记录。
+
+应用订阅前会备份 `BTG_MIHOMO_CONFIG`，然后通过 `/configs?force=true` 传递新 YAML
+让 Mihomo 重载；重载失败时恢复文件并尝试加载旧配置。订阅链接作为 root 私密状态和
+Mihomo 配置保存，列表响应只显示不含查询参数的提示。
+
 ## 多无线网卡
 
 `net.ifaces {}` 返回当前所有非 loopback 网络接口。每项包含 `name/type/bus/external/driver/state/ipv4/mac`，无线接口还包含 `ssid/bssid/signal_dbm/freq`。USB 无线网卡通常为 `type=wifi,bus=usb,external=true`。
@@ -108,6 +120,14 @@
 ## USB 外接设备
 
 `device.usb.list {"offset":0,"limit":8}` 从 sysfs 分页枚举当前外接 USB 设备（不包含主控根 Hub）。响应包含总数、下一偏移以及 `devices`；每台设备包括 VID:PID、厂商、产品、可选序列号、USB 速率、设备类别、已绑定驱动和关联的网卡/磁盘/串口名。该命令只读，不执行 USB 授权切换、断电或存储卸载。
+
+## 磁盘与 U 盘
+
+`storage.list {"offset":0,"limit":8}` 通过 `lsblk` 分页返回板载磁盘、闪存、分区和
+USB 存储，包含容量、文件系统、卷标、挂载点、已用空间及是否可挂载。
+`storage.mount {"path":"/dev/sda1"}` 只接受当前枚举出的带文件系统设备，挂载到
+`/mnt/bt-remote/` 并使用 `nosuid,nodev`。`storage.unmount` 只允许卸载由 App 挂载到
+该目录下的文件系统，不会卸载系统原有挂载点。
 
 ## App 内文件管理
 

@@ -11,8 +11,8 @@ android {
         applicationId = "com.orangepi.btremote"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.6"
+        versionCode = 13
+        versionName = "1.7"
     }
 
     buildTypes {

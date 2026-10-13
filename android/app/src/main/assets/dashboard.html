@@ -205,6 +205,7 @@
   .transfer .pb{height:6px}
   #fileEditor{width:100%;height:48vh;resize:none;font:12px/1.55 var(--mono);
     background:#070a10;color:#dbe7f6;border:1px solid var(--line);border-radius:9px;padding:10px}
+  #fileStorageFav:empty{display:none}
 </style>
 </head>
 <body>
@@ -238,7 +239,6 @@
     <button data-tab="svc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>服务</button>
     <button data-tab="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络</button>
     <button data-tab="dev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 12h8M9 8v8M15 8v8"/><path d="M7 4h10v4H7zM6 16h12v4H6z"/></svg>外设</button>
-    <button data-tab="pwr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>电源</button>
     <button data-tab="file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h7l2 2h9v11H3z"/><path d="M3 6V4h6l2 2"/></svg>文件</button>
     <button data-tab="tty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>终端</button>
   </nav>
@@ -278,16 +278,11 @@
     </div>
 
     <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg>磁盘挂载</h2>
-      <div class="iface" style="padding-top:0">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg></div>
-        <div class="bd">
-          <div class="nm">根分区 <span class="dim" style="font-weight:400">/</span></div>
-          <div class="sub" id="dskSub">--</div>
-        </div>
-        <span class="tag" id="dskTag">--</span>
-      </div>
-      <div class="pb" style="margin-top:10px"><i id="bDskFull"></i></div>
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg>存储与挂载
+        <button class="ghost" id="btnStorageReload" style="margin-left:auto;padding:4px 9px">刷新</button>
+      </h2>
+      <div id="storageState" class="dim" style="font-size:11px;margin-bottom:4px">连接后读取磁盘。</div>
+      <div id="storageList"></div>
     </div>
 
     <div class="card">
@@ -301,26 +296,35 @@
 
   <!-- 服务 -->
   <section id="tab-svc" class="hide">
-    <div class="card fold" id="foldSvc">
-      <div class="fold-head">
-        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>系统服务</h2>
-        <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-      </div>
-      <div class="fold-body">
-        <div class="bar" style="margin:4px 0 6px">
-          <button class="ghost" id="btnSvcReload">刷新</button>
-          <span class="dim" id="svcCount" style="font-size:11px;margin-left:auto">--</span>
-        </div>
-        <div id="svcList"></div>
-      </div>
-    </div>
-
     <div class="card fold" id="foldProxy">
       <div class="fold-head">
         <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>代理服务</h2>
         <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
       </div>
       <div class="fold-body">
+        <div class="field">
+          <label>订阅名称</label>
+          <input id="proxySubName" placeholder="例如：机场订阅" maxlength="40" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>订阅链接</label>
+          <input id="proxySubUrl" type="url" placeholder="https://example.com/subscribe?..." autocomplete="off"
+            autocapitalize="off" spellcheck="false">
+        </div>
+        <div class="dim" style="font-size:11px;margin:-5px 0 8px">支持 Mihomo/Clash proxy-provider 格式；应用前会备份现有配置。</div>
+        <div class="row2" style="margin:0 0 10px">
+          <button class="ghost" id="btnProxySubSave" style="flex:1">保存订阅</button>
+          <button class="ghost" id="btnProxySubReload" style="flex:0 0 auto">刷新列表</button>
+        </div>
+        <div class="field">
+          <label>选择已保存订阅</label>
+          <select id="proxySubSelect"></select>
+        </div>
+        <div class="row2" style="margin:0 0 12px">
+          <button class="pri" id="btnProxySubApply" style="flex:1">应用所选订阅</button>
+          <button class="danger" id="btnProxySubRemove" style="flex:0 0 auto">删除</button>
+        </div>
+        <div id="proxySubState" class="dim" style="font-size:11px;margin-bottom:12px">读取订阅配置…</div>
         <div class="li" style="padding-top:0">
           <div class="nm">代理开关<div class="sub" id="proxyStatus">读取中…</div></div>
           <div class="switch disabled" id="proxySwitch"><i></i></div>
@@ -337,6 +341,28 @@
           <button class="ghost" id="btnProxyRefresh" style="flex:1">刷新延迟</button>
           <button class="danger" id="btnProxyClear" style="flex:1">全部直连</button>
         </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>开关机</h2>
+      <div class="note">蓝牙无法给完全断电的板子上电（硬件限制）。这里的关机/重启是软件下发；
+        定时开机由板载 RTC 完成，真正的冷启动需要外接智能插座。</div>
+      <div class="row2"><button class="ghost" id="btnReboot" style="flex:1">重启</button>
+        <button class="danger" id="btnPoweroff" style="flex:1">关机</button></div>
+    </div>
+    <div class="card">
+      <h2>定时唤醒（RTC）</h2>
+      <div class="field"><label>唤醒时间</label>
+        <input id="rtcAt" type="datetime-local"></div>
+      <div class="field"><label>重复</label>
+        <select id="rtcRepeat">
+          <option value="none">仅一次</option>
+          <option value="daily">每天</option>
+        </select></div>
+      <div class="row2">
+        <button class="ghost" id="btnRtcGet" style="flex:1">读取当前</button>
+        <button class="pri" id="btnRtcSet" style="flex:1">设置</button>
       </div>
     </div>
   </section>
@@ -383,31 +409,6 @@
     </div>
   </section>
 
-  <!-- 电源 -->
-  <section id="tab-pwr" class="hide">
-    <div class="card">
-      <h2>开关机</h2>
-      <div class="note">蓝牙无法给完全断电的板子上电（硬件限制）。这里的关机/重启是软件下发；
-        定时开机由板载 RTC 完成，真正的冷启动需要外接智能插座。</div>
-      <div class="row2"><button class="ghost" id="btnReboot" style="flex:1">重启</button>
-        <button class="danger" id="btnPoweroff" style="flex:1">关机</button></div>
-    </div>
-    <div class="card">
-      <h2>定时唤醒（RTC）</h2>
-      <div class="field"><label>唤醒时间</label>
-        <input id="rtcAt" type="datetime-local"></div>
-      <div class="field"><label>重复</label>
-        <select id="rtcRepeat">
-          <option value="none">仅一次</option>
-          <option value="daily">每天</option>
-        </select></div>
-      <div class="row2">
-        <button class="ghost" id="btnRtcGet" style="flex:1">读取当前</button>
-        <button class="pri" id="btnRtcSet" style="flex:1">设置</button>
-      </div>
-    </div>
-  </section>
-
   <!-- 文件 -->
   <section id="tab-file" class="hide">
     <div class="card">
@@ -426,6 +427,7 @@
         <button class="ghost file-fav" data-path="/etc">/etc</button>
         <button class="ghost file-fav" data-path="/var/log">/var/log</button>
       </div>
+      <div id="fileStorageFav" class="row2" style="flex-wrap:wrap"></div>
       <div class="row2">
         <button class="pri" id="btnFileUpload" style="flex:1">上传</button>
         <button class="ghost" id="btnFileMkdir" style="flex:1">新建目录</button>
@@ -654,6 +656,10 @@ const ERR_HINT = {
   E_FILE_OFFSET: "文件传输偏移不一致",
   E_FILE_SIZE: "文件大小不一致",
   E_FILE_HASH: "文件 SHA256 校验失败",
+  E_STORAGE: "磁盘信息读取失败",
+  E_STORAGE_ARGS: "磁盘或挂载参数不合法",
+  E_STORAGE_NOTFOUND: "磁盘已经拔出或不存在",
+  E_STORAGE_MOUNT: "磁盘挂载或卸载失败",
   E_PROXY_AUTH: "Mihomo 控制器认证失败",
   E_PROXY_CONFIG: "Mihomo 尚未配置",
   E_PROXY_CONNECT: "无法连接 Mihomo 控制器",
@@ -662,6 +668,10 @@ const ERR_HINT = {
   E_PROXY_NOTFOUND: "没有找到代理组或节点",
   E_PROXY_SIZE: "Mihomo 返回数据过大",
   E_PROXY_TIMEOUT: "Mihomo 请求超时",
+  E_PROXY_SUB_ARGS: "订阅名称或链接不合法",
+  E_PROXY_SUB_NOTFOUND: "没有找到这个订阅",
+  E_PROXY_SUB_ACTIVE: "当前订阅不能直接删除，请先应用另一个订阅",
+  E_PROXY_SUB_SIZE: "保存的订阅数量已达到上限",
   E_BUSY: "板端正忙（已有终端任务在跑），稍后再试",
   E_TIMEOUT: "板端执行超时",
   E_INTERNAL: "板端内部错误"
@@ -735,8 +745,9 @@ function feed(line) {
       startStream();
       loadSysInfo();
       loadOverview();
-      refreshServices();
       loadProxy(false);
+      loadProxySubscriptions();
+      loadStorage(true);
       if (curTab === "file") loadFiles(fileDir, false);
       if (curTab === "dev") loadUsbDevices(true);
       /* 每次重建连接，终端相位都是干净的（裸相位不会跨连接存活） */
@@ -788,7 +799,7 @@ function clearPending() {
 function onEvent(m) {
   if (m.name === "metrics") { renderMetrics(m.data); return; }
   if (m.name === "alert") { toast("[" + m.data.level + "] " + m.data.msg); return; }
-  if (m.name === "svc") { refreshServices(); return; }
+  if (m.name === "svc") return;
   if (m.name === "log") { appendLog(m.data); return; }
   /* 板端已 fork 出 PTY 并切到裸字节相位，之后所有字节都直接进终端 */
   if (m.name === "term.ready") {
@@ -863,10 +874,15 @@ function onState(state, info) {
     gatewayCaps = [];
     fileCaps = null;
     networkIfaces = []; usbRows = []; usbNext = 0; usbEof = true;
+    storageRows = [];
+    proxySubscriptions = { items: [], active_id: "", config_ready: false, config_path: "" };
+    proxySubError = "";
     stopStream(); clearPending(); stopFollow();
     resetShell();                 // 裸相位不会跨连接存活，必须复位
     setConnFold(false);
     renderFiles();
+    renderStorage();
+    renderProxySubscriptions();
     if (state === "error") {
       setConn("err", "连接失败"); toast(info);
       // 多行 = 连接诊断详情，用浮层留住，别让它 2 秒就消失
@@ -1088,10 +1104,6 @@ function renderMetrics(d) {
     ifaceBox.appendChild(div);
   });
 
-  $("#dskSub").textContent = fmtKB(disk.root_used_kb || 0) + " / " + fmtKB(disk.root_total_kb || 0);
-  $("#dskTag").textContent = dskPct + "%";
-  $("#bDskFull").style.width = dskPct + "%";
-  $("#bDskFull").style.background = dskPct > 85 ? "var(--bad)" : dskPct > 75 ? "var(--warn)" : "var(--accent)";
   $("#iLoad").textContent = [cpu.load1, cpu.load5, cpu.load15].map(x => (x || 0).toFixed(2)).join("  ");
   const upSec = uptimeSec();
   $("#iUp").textContent = upSec == null ? "--" : up(upSec);
@@ -1149,97 +1161,6 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, ch =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 }
-
-/* ============ 渲染：服务 ============ */
-/* 板端 DANGEROUS_SVC = {("ssh.service","stop"),("ssh.service","disable")}
-   confirm 必须严格等于 action 的大写形式 */
-const SVC_ACTIONS = ["start", "stop", "restart", "enable", "disable"];
-const ACT_LABEL = { start: "启动", stop: "停止", restart: "重启", enable: "自启", disable: "禁自启" };
-const DANGEROUS = { "ssh.service": ["stop", "disable"] };
-let svcRefreshEpoch = 0;
-
-async function refreshServices() {
-  if (!authed) return;
-  const epoch = ++svcRefreshEpoch;
-  const reload = $("#btnSvcReload");
-  reload.disabled = true;
-  reload.textContent = "刷新中…";
-  $("#svcCount").textContent = "正在读取";
-  try {
-    const list = [];
-    let offset = 0, total = 0;
-    for (let pageNo = 0; pageNo < 256; pageNo++) {
-      const page = await send("svc.list", { offset: offset, limit: 8, refresh: offset === 0 }, 20000);
-      if (epoch !== svcRefreshEpoch) return;
-      if (Array.isArray(page)) {
-        list.push.apply(list, page);
-        total = list.length;
-        break;
-      }
-      if (!page || !Array.isArray(page.services) || page.truncated)
-        throw new Error("板端返回了不完整的服务分页");
-      list.push.apply(list, page.services);
-      total = Number(page.total) || list.length;
-      if (page.eof) break;
-      const next = Number(page.next_offset);
-      if (!Number.isFinite(next) || next <= offset) throw new Error("服务分页游标无效");
-      offset = next;
-    }
-    if (epoch !== svcRefreshEpoch) return;
-    const box = $("#svcList");
-    box.innerHTML = "";
-    $("#svcCount").textContent = list.length + (total > list.length ? " / " + total : "") + " 项";
-    if (!list.length) box.innerHTML = "<div class='dim' style='font-size:12px'>（没有发现系统服务）</div>";
-    (list || []).forEach(u => {
-      const div = document.createElement("div");
-      div.className = "li";
-      const cls = u.active === "active" ? "ok" : (u.active === "failed" ? "bad" : "off");
-      let acts = "";
-      const managed = u.managed !== false;
-      if (managed) SVC_ACTIONS.forEach(a => {
-          acts += "<button data-u='" + esc(u.unit) + "' data-a='" + a + "'>" + ACT_LABEL[a] + "</button>";
-        });
-      div.innerHTML =
-        "<div class='nm'>" + esc(u.unit) +
-        (u.desc ? "<div class='sub'>" + esc(u.desc) + "</div>" : "") + "</div>" +
-        "<span class='pill " + cls + "'>" + esc(u.active) + "</span>" +
-        "<span class='pill " + (u.enabled === "enabled" ? "ok" : (u.enabled === "masked" ? "bad" : "off")) + "'>" +
-        esc(u.enabled) + "</span>" +
-        (managed ? "<span class='acts'>" + acts + "</span>" : "<span class='pill off'>只读</span>");
-      box.appendChild(div);
-    });
-    box.querySelectorAll("button").forEach(b => {
-      b.onclick = async () => {
-        const u = b.dataset.u, a = b.dataset.a;
-        if ((DANGEROUS[u] || []).indexOf(a) >= 0) {
-          const tip = a === "stop"
-            ? "停掉 SSH 会让你暂时无法用 SSH 登板子（蓝牙这条链路不受影响）。"
-            : "禁用 SSH 自启后，板子下次重启就不会自动开 SSH 了。";
-          if (!await confirmWord(a + " " + u, tip, a.toUpperCase())) return;
-        }
-        b.disabled = true;
-        try {
-          await send("svc.act", { unit: u, action: a, confirm: a.toUpperCase() });
-          toast(u + " → " + ACT_LABEL[a] + " 已下发");
-        } catch (e) { toast("失败：" + e.message); }
-        b.disabled = false;
-        refreshServices();
-      };
-    });
-    toast("服务已刷新，共 " + list.length + " 项");
-  } catch (e) {
-    if (epoch === svcRefreshEpoch) {
-      $("#svcCount").textContent = "刷新失败";
-      toast("服务列表获取失败：" + e.message);
-    }
-  } finally {
-    if (epoch === svcRefreshEpoch) {
-      reload.disabled = false;
-      reload.textContent = "刷新";
-    }
-  }
-}
-$("#btnSvcReload").onclick = refreshServices;
 
 /* ============ 折叠卡片 ============ */
 document.querySelectorAll(".fold-head").forEach(h => {
@@ -1310,6 +1231,103 @@ document.querySelectorAll(".mode-bar button").forEach(b => {
 });
 $("#btnProxyClear").onclick = () => proxyAction("proxy.mode", { mode: "direct" }, "已切到全部直连");
 $("#btnProxyRefresh").onclick = () => loadProxy(true);
+
+let proxySubscriptions = { items: [], active_id: "", config_ready: false, config_path: "" };
+let proxySubBusy = false;
+let proxySubError = "";
+
+function renderProxySubscriptions() {
+  const select = $("#proxySubSelect");
+  const previous = select.value;
+  select.innerHTML = "";
+  if (!proxySubscriptions.items.length) {
+    const option = document.createElement("option");
+    option.value = ""; option.textContent = "暂无已保存订阅"; select.appendChild(option);
+  } else {
+    proxySubscriptions.items.forEach(item => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = (item.id === proxySubscriptions.active_id ? "当前 · " : "") + item.name +
+        (item.url_hint ? " · " + item.url_hint : "");
+      select.appendChild(option);
+    });
+    select.value = proxySubscriptions.items.some(item => item.id === previous) ? previous :
+      (proxySubscriptions.active_id || proxySubscriptions.items[0].id);
+  }
+  const state = $("#proxySubState");
+  state.textContent = proxySubError || (proxySubscriptions.config_ready
+    ? (proxySubscriptions.active_id ? "当前订阅已写入 Mihomo 配置；应用新订阅会自动备份原配置。" : "可选择订阅并应用到 Mihomo。")
+    : "未找到可写的 Mihomo 配置；请设置 BTG_MIHOMO_CONFIG。");
+  ["#btnProxySubSave", "#btnProxySubReload", "#btnProxySubApply", "#btnProxySubRemove"]
+    .forEach(id => $(id).disabled = proxySubBusy);
+  $("#btnProxySubApply").disabled = proxySubBusy || !select.value || !proxySubscriptions.config_ready;
+  $("#btnProxySubRemove").disabled = proxySubBusy || !select.value;
+}
+
+async function loadProxySubscriptions() {
+  if (!authed && isNative) return;
+  proxySubError = "";
+  if (!isNative) {
+    proxySubscriptions = { items: [{ id: "demo00000001", name: "演示订阅", url_hint: "example.com/sub?…" }],
+      active_id: "demo00000001", config_ready: true, config_path: "/etc/mihomo/config.yaml" };
+    renderProxySubscriptions(); return;
+  }
+  proxySubBusy = true; renderProxySubscriptions();
+  try {
+    proxySubscriptions = await send("proxy.sub.list", {}, 20000);
+  } catch (e) {
+    proxySubscriptions = { items: [], active_id: "", config_ready: false, config_path: "" };
+    proxySubError = "订阅功能不可用：" + e.message;
+  } finally {
+    proxySubBusy = false; renderProxySubscriptions();
+  }
+}
+
+$("#btnProxySubReload").onclick = loadProxySubscriptions;
+$("#btnProxySubSave").onclick = async () => {
+  const name = $("#proxySubName").value.trim();
+  const url = $("#proxySubUrl").value.trim();
+  if (!name || !url) { toast("请填写订阅名称和链接"); return; }
+  proxySubBusy = true; renderProxySubscriptions();
+  try {
+    await send("proxy.sub.save", { name: name, url: url }, 20000);
+    $("#proxySubName").value = ""; $("#proxySubUrl").value = "";
+    toast("订阅已保存");
+    proxySubBusy = false;
+    await loadProxySubscriptions();
+  } catch (e) {
+    proxySubBusy = false; renderProxySubscriptions(); toast("保存订阅失败：" + e.message);
+  }
+};
+$("#btnProxySubApply").onclick = async () => {
+  const id = $("#proxySubSelect").value;
+  if (!id || proxySubBusy) return;
+  proxySubBusy = true; renderProxySubscriptions();
+  $("#proxySubState").textContent = "正在备份配置并加载订阅…";
+  try {
+    await send("proxy.sub.apply", { id: id }, 60000);
+    toast("订阅已应用，正在读取节点");
+    proxySubBusy = false;
+    await loadProxySubscriptions();
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    await loadProxy(false);
+  } catch (e) {
+    proxySubBusy = false; renderProxySubscriptions(); toast("应用订阅失败：" + e.message);
+  }
+};
+$("#btnProxySubRemove").onclick = async () => {
+  const id = $("#proxySubSelect").value;
+  if (!id || proxySubBusy) return;
+  proxySubBusy = true; renderProxySubscriptions();
+  try {
+    await send("proxy.sub.remove", { id: id }, 20000);
+    toast("订阅已删除");
+    proxySubBusy = false;
+    await loadProxySubscriptions();
+  } catch (e) {
+    proxySubBusy = false; renderProxySubscriptions(); toast("删除订阅失败：" + e.message);
+  }
+};
 
 async function loadProxy(refresh) {
   if (!authed && isNative) return;
@@ -1576,6 +1594,154 @@ async function loadUsbDevices(reset) {
 }
 $("#btnUsbReload").onclick = () => loadUsbDevices(true);
 $("#btnUsbMore").onclick = () => loadUsbDevices(false);
+
+/* ============ 板端磁盘与挂载 ============ */
+let storageRows = [], storageBusy = false;
+
+function storageTitle(item) {
+  const label = item.label || item.model || item.name || item.path;
+  return (item.type === "disk" ? "磁盘 · " : "分区 · ") + label;
+}
+
+function storageDetail(item) {
+  const parts = [fmtBytes(item.size_bytes)];
+  if (item.fstype) parts.push(item.fstype);
+  if (item.mountpoint) {
+    parts.push(item.mountpoint);
+    if (item.total_bytes != null) parts.push("已用 " + fmtBytes(item.used_bytes) + " / " + fmtBytes(item.total_bytes));
+  } else if (item.fstype) parts.push("未挂载");
+  else parts.push("无文件系统");
+  return parts.join(" · ");
+}
+
+function renderStorageShortcuts() {
+  const box = $("#fileStorageFav");
+  if (!box) return;
+  box.innerHTML = "";
+  storageRows.filter(item => item.mountpoint && item.mountpoint !== "/" && item.fstype).forEach(item => {
+    const button = document.createElement("button");
+    button.className = "ghost";
+    button.textContent = (item.external ? "USB " : "磁盘 ") + (item.label || item.name);
+    button.onclick = () => loadFiles(item.mountpoint, false);
+    box.appendChild(button);
+  });
+  storageRows.filter(item => item.external && item.can_mount).forEach(item => {
+    const button = document.createElement("button");
+    button.className = "ghost";
+    button.textContent = "挂载 " + (item.label || item.name);
+    button.onclick = () => mountStorage(item, true);
+    box.appendChild(button);
+  });
+}
+
+function renderStorage() {
+  const box = $("#storageList");
+  box.innerHTML = "";
+  if (!storageRows.length) {
+    box.innerHTML = "<div class='dim' style='font-size:12px'>（未发现磁盘或分区）</div>";
+    renderStorageShortcuts();
+    return;
+  }
+  storageRows.forEach(item => {
+    const div = document.createElement("div");
+    div.className = "iface";
+    const icon = item.external ? "USB" : (item.type === "disk" ? "DISK" : "VOL");
+    div.innerHTML =
+      "<div class='ic mono' style='font-size:9px'>" + icon + "</div>" +
+      "<div class='bd'><div class='nm'>" + esc(storageTitle(item)) + "</div>" +
+      "<div class='sub'>" + esc(storageDetail(item)) + "</div></div>" +
+      "<span class='tag'>" + (item.external ? "外接" : "板载") + "</span>";
+    if (item.mountpoint && item.fstype) {
+      const open = document.createElement("button");
+      open.className = "ghost"; open.textContent = "文件";
+      open.style.cssText = "padding:5px 8px;font-size:11px";
+      open.onclick = () => { switchTab("file"); loadFiles(item.mountpoint, false); };
+      div.appendChild(open);
+    } else if (item.can_mount) {
+      const mount = document.createElement("button");
+      mount.className = "ghost"; mount.textContent = "挂载";
+      mount.style.cssText = "padding:5px 8px;font-size:11px";
+      mount.disabled = storageBusy;
+      mount.onclick = () => mountStorage(item, false);
+      div.appendChild(mount);
+    }
+    if (item.managed_mount) {
+      const unmount = document.createElement("button");
+      unmount.className = "ghost"; unmount.textContent = "卸载";
+      unmount.style.cssText = "padding:5px 8px;font-size:11px";
+      unmount.disabled = storageBusy;
+      unmount.onclick = () => unmountStorage(item);
+      div.appendChild(unmount);
+    }
+    box.appendChild(div);
+  });
+  renderStorageShortcuts();
+}
+
+async function loadStorage(force) {
+  if ((!authed && isNative) || storageBusy) return;
+  if (gatewayCaps.length && !gatewayCaps.includes("storage")) {
+    $("#storageState").textContent = "需要安装最新版网关后读取全部磁盘";
+    return;
+  }
+  storageBusy = true;
+  $("#storageState").textContent = "正在读取磁盘…";
+  try {
+    const rows = [];
+    let offset = 0, total = 0;
+    for (let pageNo = 0; pageNo < 64; pageNo++) {
+      const page = await send("storage.list", { offset: offset, limit: 8, refresh: !!force }, 20000);
+      rows.push.apply(rows, page.devices || []);
+      total = Number(page.count) || rows.length;
+      if (page.eof) break;
+      const next = Number(page.next_offset);
+      if (!Number.isFinite(next) || next <= offset) throw new Error("磁盘分页游标无效");
+      offset = next;
+    }
+    storageRows = rows;
+    $("#storageState").textContent = "已发现 " + total + " 个磁盘或分区";
+    renderStorage();
+  } catch (e) {
+    $("#storageState").textContent = "读取失败：" + e.message;
+    toast("磁盘读取失败：" + e.message);
+  } finally {
+    storageBusy = false;
+    renderStorage();
+  }
+}
+
+async function mountStorage(item, openAfter) {
+  if (storageBusy) return;
+  storageBusy = true; renderStorage();
+  try {
+    const result = await send("storage.mount", { path: item.path }, 40000);
+    toast("已挂载到 " + result.mountpoint);
+    storageBusy = false;
+    await loadStorage(true);
+    if (openAfter || curTab === "file") {
+      switchTab("file");
+      loadFiles(result.mountpoint, false);
+    }
+  } catch (e) {
+    storageBusy = false; renderStorage();
+    toast("挂载失败：" + e.message);
+  }
+}
+
+async function unmountStorage(item) {
+  if (storageBusy) return;
+  storageBusy = true; renderStorage();
+  try {
+    await send("storage.unmount", { path: item.path }, 40000);
+    toast("已卸载 " + item.path);
+    storageBusy = false;
+    await loadStorage(true);
+  } catch (e) {
+    storageBusy = false; renderStorage();
+    toast("卸载失败：" + e.message);
+  }
+}
+$("#btnStorageReload").onclick = () => loadStorage(true);
 
 /* ============ 板端文件管理 ============ */
 let fileDir = "/root", fileRows = [], fileNext = 0, fileEof = true;
@@ -2000,7 +2166,7 @@ window.onAndroidBack = function () {
 };
 
 /* ============ 标签页 ============ */
-const TAB_ORDER = ["ov", "svc", "net", "dev", "pwr", "file", "tty"];
+const TAB_ORDER = ["ov", "svc", "net", "dev", "file", "tty"];
 let curTab = "ov";
 
 function switchTab(name) {
@@ -2013,11 +2179,11 @@ function switchTab(name) {
   if (activeTab) activeTab.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
   TAB_ORDER.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== name));
   if (name !== "tty") setTtyFull(false);   // 切走终端页时退出全屏
-  if (name === "svc") { refreshServices(); loadProxy(false); }
+  if (name === "svc") { loadProxy(false); loadProxySubscriptions(); }
   if (name === "net") loadNetwork().then(loadSaved);
   if (name === "dev") loadUsbDevices(true);
-  if (name === "file") loadFiles(fileDir, false);
-  if (name === "ov") loadOverview();
+  if (name === "file") { loadStorage(false); loadFiles(fileDir, false); }
+  if (name === "ov") { loadOverview(); loadStorage(false); }
   if (name === "tty") onTtyOpen();
 }
 
@@ -2074,7 +2240,7 @@ const TERM_RENDER_CHUNK = 16384;
 let sticky = null;                 // 粘滞修饰键：null | ctrl | alt
 let fitT = null;
 
-const TTY_QUICK_PROTO = ["sys.info", "sys.metrics", "svc.list", "net.wifi.status",
+const TTY_QUICK_PROTO = ["sys.info", "sys.metrics", "storage.list", "net.wifi.status",
   "net.ifaces", "pwr.rtc.get", "term.caps", "term.exec {\"command\":\"uname -a\"}",
   "file.list {\"path\":\"/root\",\"offset\":0,\"limit\":12}",
   "device.usb.list {\"offset\":0,\"limit\":8}"];
@@ -2606,7 +2772,7 @@ function startDemo() {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
 
     if (m.t === "auth") {
-      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "multiwifi"] }));
+      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi"] }));
       return;
     }
     const id = m.id;
@@ -2674,12 +2840,36 @@ function startDemo() {
         product: "Ultra", speed_mbps: 5000, kind: "storage", drivers: ["usb-storage"],
         net_ifaces: [], block_devices: ["sda"], tty_devices: [], authorized: true }
     ] });
+    if (m.name === "storage.list") return ok({ count: 5, next_offset: 5, eof: true, devices: [
+      { name: "mmcblk0p2", path: "/dev/mmcblk0p2", type: "part", parent: "/dev/mmcblk0",
+        size_bytes: 31900000000, fstype: "ext4", label: "system", mountpoint: "/", total_bytes: 30400000000,
+        used_bytes: 22000000000, external: false, model: "SD Card", can_mount: false, managed_mount: false },
+      { name: "mmcblk2", path: "/dev/mmcblk2", type: "disk", parent: "", size_bytes: 8000000000,
+        fstype: "", label: "", mountpoint: "", external: false, model: "8GB eMMC", can_mount: false, managed_mount: false },
+      { name: "mmcblk2p1", path: "/dev/mmcblk2p1", type: "part", parent: "/dev/mmcblk2", size_bytes: 7900000000,
+        fstype: "ext4", label: "EMMC", mountpoint: "", external: false, model: "8GB eMMC", can_mount: true, managed_mount: false },
+      { name: "sda", path: "/dev/sda", type: "disk", parent: "", size_bytes: 64000000000,
+        fstype: "", label: "", mountpoint: "", external: true, model: "SanDisk Ultra", can_mount: false, managed_mount: false },
+      { name: "sda1", path: "/dev/sda1", type: "part", parent: "/dev/sda", size_bytes: 63900000000,
+        fstype: "exfat", label: "U盘", mountpoint: "/mnt/bt-remote/sda1", total_bytes: 63900000000,
+        used_bytes: 12000000000, external: true, model: "SanDisk Ultra", can_mount: false, managed_mount: true }
+    ] });
+    if (m.name === "storage.mount") return ok({ path: m.args.path, mountpoint: "/mnt/bt-remote/" + m.args.path.split("/").pop(), mounted: true });
+    if (m.name === "storage.unmount") return ok({ path: m.args.path, mounted: false });
+    if (m.name === "proxy.sub.list") return ok({ items: [{ id: "demo00000001", name: "演示订阅", url_hint: "example.com/sub?…" }],
+      active_id: "demo00000001", config_ready: true, config_path: "/etc/mihomo/config.yaml" });
+    if (m.name === "proxy.sub.save") return ok({ id: "demo00000002", name: m.args.name, url_hint: "example.com/sub?…", saved: true });
+    if (m.name === "proxy.sub.apply") return ok({ id: m.args.id, applied: true, group: "PROXY" });
+    if (m.name === "proxy.sub.remove") return ok({ id: m.args.id, removed: true });
     if (m.name === "file.caps") return ok({ root: "/", chunk_bytes: 1536,
       max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true });
     if (m.name === "file.list") {
       const rows = m.args.path === "/root" ? [
         { name: "projects", type: "dir", size: 4096, mtime: 1760270400, mode: "0755" },
         { name: "说明.txt", type: "file", size: demoText.length, mtime: 1760270400, mode: "0644" }
+      ] : m.args.path === "/mnt/bt-remote/sda1" ? [
+        { name: "照片", type: "dir", size: 4096, mtime: 1760270400, mode: "0755" },
+        { name: "U盘说明.txt", type: "file", size: demoText.length, mtime: 1760270400, mode: "0644" }
       ] : [];
       return ok({ path: m.args.path, parent: fileParent(m.args.path), entries: rows,
         next_offset: rows.length, eof: true });

@@ -9,7 +9,9 @@ An authenticated terminal and `term.exec` provide root access. The token is a cr
 - `term.exec` deliberately accepts arbitrary shell syntax after token authentication. It is bounded by command length, output size and timeout, but it is not a sandbox or command whitelist.
 - The authenticated `file.*` API can read and modify the root filesystem. Uploads are atomic and deletion is limited to regular files, symlinks and empty directories, but it is not a path sandbox. Protect the token as a root credential.
 - `device.usb.list` is read-only but exposes attached-device model, VID:PID, serial number and Linux device names to an authenticated client. Treat hardware inventory as private operational data.
+- `storage.mount` can mount a discovered filesystem with `nosuid,nodev`; `storage.unmount` is restricted to `/mnt/bt-remote`. File APIs still have root access to mounted media, so disconnect untrusted devices and protect the token.
 - Keep the mihomo external controller on loopback. Store its secret in a root-readable file and point `BTG_MIHOMO_SECRET_FILE` at that file; do not embed the secret in the APK.
+- Subscription URLs often contain account tokens. They are stored only in root-owned gateway state and the configured Mihomo YAML; App list responses redact query parameters. Backups under `/etc/bt-gateway/mihomo-backups/` must also be treated as secrets.
 - `bt-remote token` deliberately displays the token on the local console; status/doctor and installation do not.
 - To change a compromised token, stop the gateway, replace the root-owned token file with a newly generated random value, restore mode 0600, restart, and update the phone. Remove untrusted Bluetooth pairings too.
 

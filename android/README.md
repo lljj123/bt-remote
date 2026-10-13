@@ -26,9 +26,9 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 解析器按连接隔离，终端期间阻止管理 JSON；断线或连接任务取消后旧线程不能覆盖新连接。令牌使用 Android Keystore 加密存储，旧 localStorage 值在成功迁移后清除。
 
-概览页不显示额外的“自定义系统信息”卡片；通用 `term.exec` 仍可从协议台调用。服务页分页读取全部已安装或已加载的 systemd service，非管理白名单服务只读显示；代理卡片调用 `proxy.status/switch/mode/onoff`，需要板端配置 mihomo external-controller。
+概览页不显示额外的“自定义系统信息”卡片；通用 `term.exec` 仍可从协议台调用。“服务”页只保留代理与电源/RTC：代理卡片调用 `proxy.status/switch/mode/onoff` 和 `proxy.sub.*`，可保存并应用 Mihomo/Clash proxy-provider 订阅，需要板端配置 mihomo external-controller 与配置文件路径。
 
-“文件”页替代旧的“日志”页签。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。上传及下载都校验 SHA256；小型 UTF-8 文本可以直接预览和原子保存。
+“文件”页替代旧的“日志”页签。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。上传及下载都校验 SHA256；小型 UTF-8 文本可以直接预览和原子保存。`storage.*` 使用 `lsblk` 枚举板载闪存和 USB 存储，App 挂载的分区会成为文件页快捷入口。
 
 “网络”页通过 `net.ifaces` 枚举全部网卡，可选择板载或 USB 无线接口，再将 `iface` 传给 `net.wifi.status/scan/saved/connect/forget`。“外设”页通过分页的 `device.usb.list` 显示 USB 设备、驱动及其网卡/磁盘/串口节点，不需要 Android USB 权限，因为枚举发生在板端。
 

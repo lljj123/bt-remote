@@ -56,6 +56,7 @@ GATEWAY = load_gateway()
 class FakeMihomo(BaseHTTPRequestHandler):
     mode = "rule"
     selected = "node-a"
+    reloaded_payload = ""
 
     def log_message(self, _format, *_args):
         pass
@@ -105,7 +106,11 @@ class FakeMihomo(BaseHTTPRequestHandler):
         return self.json({"error": "not found"}, 404)
 
     def do_PUT(self):
-        if self.path == "/proxies/PROXY":
+        parsed = urlparse(self.path)
+        if parsed.path == "/configs":
+            type(self).reloaded_payload = self.body().get("payload", "")
+            return self.no_content()
+        if parsed.path == "/proxies/PROXY":
             type(self).selected = self.body()["name"]
             return self.no_content()
         return self.json({"error": "not found"}, 404)
@@ -130,6 +135,85 @@ class GatewayCommandTests(unittest.TestCase):
     def setUp(self):
         FakeMihomo.mode = "rule"
         FakeMihomo.selected = "node-a"
+        FakeMihomo.reloaded_payload = ""
+
+    def test_storage_inventory_lists_internal_flash_and_usb(self):
+        tree = [{
+            "name": "mmcblk2", "path": "/dev/mmcblk2", "type": "disk",
+            "size": 8000000000, "model": "8GB eMMC", "rm": False,
+            "children": [{"name": "mmcblk2p1", "path": "/dev/mmcblk2p1",
+                          "type": "part", "size": 7900000000, "fstype": "ext4",
+                          "label": "EMMC", "mountpoints": [None]}]
+        }, {
+            "name": "sda", "path": "/dev/sda", "type": "disk",
+            "size": 64000000000, "model": "USB Disk", "rm": True, "tran": "usb",
+            "children": [{"name": "sda1", "path": "/dev/sda1", "type": "part",
+                          "size": 63900000000, "fstype": "exfat", "label": "U盘",
+                          "mountpoints": ["/media/usb"]}]
+        }]
+        with mock.patch.object(GATEWAY, "_storage_lsblk", return_value=tree), \
+                mock.patch.object(GATEWAY, "_storage_space", return_value=(100, 40, 60)):
+            rows = GATEWAY.storage_rows()
+        by_path = {row["path"]: row for row in rows}
+        self.assertEqual(by_path["/dev/mmcblk2"]["size_bytes"], 8000000000)
+        self.assertTrue(by_path["/dev/mmcblk2p1"]["can_mount"])
+        self.assertTrue(by_path["/dev/sda1"]["external"])
+        self.assertEqual(by_path["/dev/sda1"]["mountpoint"], "/media/usb")
+
+    def test_storage_lsblk_falls_back_for_util_linux_234(self):
+        fallback = {"blockdevices": [{"name": "sda", "path": "/dev/sda",
+                                      "type": "disk", "size": 1000}]}
+        with mock.patch.object(GATEWAY, "run", side_effect=[
+                (1, "", "unknown column MOUNTPOINTS"),
+                (0, json.dumps(fallback), "")]) as runner:
+            rows = GATEWAY._storage_lsblk()
+        self.assertEqual(rows[0]["path"], "/dev/sda")
+        self.assertIn("MOUNTPOINTS", runner.call_args_list[0].args[0][-1])
+        self.assertIn("MOUNTPOINT", runner.call_args_list[1].args[0][-1])
+
+    def test_storage_mount_accepts_only_discovered_filesystem(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = {"path": "/dev/sdz1", "name": "sdz1", "mountpoint": "",
+                   "can_mount": True}
+            with mock.patch.object(GATEWAY, "STORAGE_MOUNT_ROOT", directory), \
+                    mock.patch.object(GATEWAY, "storage_rows", return_value=[row]), \
+                    mock.patch.object(GATEWAY, "run", return_value=(0, "", "")) as runner:
+                result = GATEWAY.cmd_storage_mount(None, {"path": "/dev/sdz1"})
+            self.assertTrue(result["mounted"])
+            self.assertTrue(result["mountpoint"].startswith(directory + os.sep))
+            runner.assert_called_once()
+            with mock.patch.object(GATEWAY, "storage_rows", return_value=[row]):
+                with self.assertRaises(GATEWAY.CmdError):
+                    GATEWAY.cmd_storage_mount(None, {"path": "/dev/not-present"})
+
+    def test_proxy_subscription_save_list_and_apply(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state.json"
+            config = root / "config.yaml"
+            backup = root / "gateway"
+            config.write_text("proxy-groups:\n  - name: PROXY\n    type: select\n    proxies: [DIRECT]\n")
+            patches = [
+                mock.patch.object(GATEWAY, "STATE_FILE", str(state)),
+                mock.patch.object(GATEWAY, "BACKUP_ROOT", str(backup)),
+                mock.patch.object(GATEWAY, "MIHOMO_CONFIG", str(config)),
+                mock.patch.object(GATEWAY, "MIHOMO_GROUP", "PROXY"),
+            ]
+            with patches[0], patches[1], patches[2], patches[3]:
+                saved = GATEWAY.cmd_proxy_sub_save(None, {
+                    "name": "机场 A", "url": "https://sub.example/path?token=secret-token"})
+                listed = GATEWAY.cmd_proxy_sub_list(None, {})
+                self.assertNotIn("secret-token", json.dumps(listed, ensure_ascii=False))
+                applied = GATEWAY.cmd_proxy_sub_apply(None, {"id": saved["id"]})
+                data = yaml.safe_load(config.read_text())
+                state_data = json.loads(state.read_text())
+            self.assertTrue(applied["applied"])
+            provider = data["proxy-providers"][GATEWAY.MIHOMO_PROVIDER]
+            self.assertEqual(provider["url"], "https://sub.example/path?token=secret-token")
+            self.assertIn(GATEWAY.MIHOMO_PROVIDER, data["proxy-groups"][0]["use"])
+            self.assertEqual(state_data["proxy_subscriptions"]["active_id"], saved["id"])
+            self.assertIn("proxy-providers", FakeMihomo.reloaded_payload)
 
     def test_service_discovery_and_paginated_listing(self):
         discovered = ["bt-gateway.service", "bluetooth.service", "new-worker.service"]
@@ -368,6 +452,22 @@ class GatewayCommandTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "E_FILE_HASH")
             self.assertEqual(target.read_bytes(), payload)
             self.assertFalse(session.file_uploads)
+
+    def test_file_upload_commit_tolerates_fat_without_chmod(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = types.SimpleNamespace(file_uploads={})
+            target = Path(directory) / "usb-file.bin"
+            begun = GATEWAY.cmd_file_upload_begin(session, {
+                "path": str(target), "size": 3, "overwrite": False})
+            GATEWAY.cmd_file_upload_chunk(session, {
+                "upload_id": begun["upload_id"], "offset": 0,
+                "data_b64": base64.b64encode(b"usb").decode()})
+            with mock.patch.object(GATEWAY.os, "chmod", side_effect=OSError(1, "not supported")):
+                committed = GATEWAY.cmd_file_upload_commit(session, {
+                    "upload_id": begun["upload_id"],
+                    "sha256": hashlib.sha256(b"usb").hexdigest()})
+            self.assertTrue(committed["committed"])
+            self.assertEqual(target.read_bytes(), b"usb")
 
 
 if __name__ == "__main__":

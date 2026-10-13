@@ -19,6 +19,7 @@ import base64
 import binascii
 import concurrent.futures
 import dbus.service
+import errno
 import fcntl
 import glob
 import hashlib
@@ -58,6 +59,8 @@ GUARD_FLAG = "/run/bt-gateway/wifi-switch-flag"
 GUARD_UNIT = "btg-wifi-guard"
 NETWORK_LOCK = threading.Lock()
 PROXY_LOCK = threading.Lock()
+STATE_LOCK = threading.Lock()
+STORAGE_LOCK = threading.Lock()
 TERM_PROTOCOL = "escaped-v1"
 TERM_MUX_PROTOCOL = "json-mux-v1"
 TERM_CHUNK = 2048
@@ -90,14 +93,18 @@ SRV_NAME = "OrangePi 3LTS Gateway"
 VER = 1
 DEV_ID = "orangepi-3lts"
 DEV_NAME = os.environ.get("BTG_DEV_NAME", "Orange Pi Bluetooth Gateway")
-CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "multiwifi"]
+CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi"]
 
 MIHOMO_API = os.environ.get("BTG_MIHOMO_API", "").rstrip("/")
 MIHOMO_SECRET_FILE = os.environ.get("BTG_MIHOMO_SECRET_FILE", "")
 MIHOMO_TEST_URL = os.environ.get(
     "BTG_MIHOMO_TEST_URL", "https://www.gstatic.com/generate_204")
 MIHOMO_GROUP = os.environ.get("BTG_MIHOMO_GROUP", "")
+MIHOMO_CONFIG = os.environ.get("BTG_MIHOMO_CONFIG", "/etc/mihomo/config.yaml")
 MIHOMO_RESPONSE_MAX = 1024 * 1024
+MIHOMO_PROVIDER = "bt-remote-subscription"
+STORAGE_MOUNT_ROOT = "/mnt/bt-remote"
+STORAGE_PAGE_MAX = 8
 
 MAX_LINE = 4096
 AUTH_TIMEOUT = 30.0
@@ -1466,6 +1473,168 @@ def cmd_device_usb_list(_s, a):
             "eof": next_offset >= len(paths)}
 
 
+# ------------------------------------------------------------------ storage.*
+def _storage_lsblk():
+    fields = "NAME,KNAME,PATH,TYPE,SIZE,FSTYPE,LABEL,MOUNTPOINTS,RM,RO,TRAN,MODEL,PKNAME"
+    rc, out, err = run(["lsblk", "-J", "-b", "-o", fields], timeout=15)
+    if rc != 0:
+        # Ubuntu releases with an older util-linux expose MOUNTPOINT but not MOUNTPOINTS.
+        fields = fields.replace("MOUNTPOINTS", "MOUNTPOINT")
+        rc, out, err = run(["lsblk", "-J", "-b", "-o", fields], timeout=15)
+    if rc != 0:
+        raise CmdError("E_STORAGE", (err or "lsblk failed").strip()[:200])
+    try:
+        data = json.loads(out)
+    except Exception:
+        raise CmdError("E_STORAGE", "lsblk returned invalid JSON")
+    rows = data.get("blockdevices") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise CmdError("E_STORAGE", "lsblk blockdevices are missing")
+    return rows
+
+
+def _storage_mounts(item):
+    value = item.get("mountpoints")
+    if not isinstance(value, list):
+        value = [item.get("mountpoint")]
+    return [path for path in value if isinstance(path, str) and path.startswith("/")]
+
+
+def _storage_space(path):
+    try:
+        info = os.statvfs(path)
+        total = info.f_blocks * info.f_frsize
+        free = info.f_bavail * info.f_frsize
+        used = (info.f_blocks - info.f_bfree) * info.f_frsize
+        return total, used, free
+    except OSError:
+        return None, None, None
+
+
+def storage_rows():
+    result = []
+
+    def visit(item, parent=None, inherited=None):
+        if not isinstance(item, dict):
+            return
+        kind = str(item.get("type") or "")
+        transport = str(item.get("tran") or (inherited or {}).get("transport") or "")
+        removable = bool(item.get("rm") or (inherited or {}).get("removable"))
+        model = _utf8_prefix(str(item.get("model") or (inherited or {}).get("model") or "").strip(), 160)
+        path = str(item.get("path") or "")
+        mounts = _storage_mounts(item)
+        mountpoint = mounts[0] if mounts else ""
+        total, used, free = _storage_space(mountpoint) if mountpoint else (None, None, None)
+        if kind in ("disk", "part") and path.startswith("/dev/"):
+            fstype = str(item.get("fstype") or "")
+            read_only = bool(item.get("ro"))
+            result.append({
+                "name": str(item.get("name") or item.get("kname") or os.path.basename(path)),
+                "path": path,
+                "type": kind,
+                "parent": parent or "",
+                "size_bytes": int(item.get("size") or 0),
+                "fstype": fstype,
+                "label": _utf8_prefix(str(item.get("label") or ""), 128),
+                "mountpoint": _utf8_prefix(mountpoint, 512),
+                "total_bytes": total,
+                "used_bytes": used,
+                "free_bytes": free,
+                "transport": transport,
+                "external": transport == "usb" or removable,
+                "removable": removable,
+                "read_only": read_only,
+                "model": model,
+                "can_mount": bool(fstype and not mountpoint and not read_only),
+                "managed_mount": bool(mountpoint and os.path.realpath(mountpoint).startswith(
+                    os.path.realpath(STORAGE_MOUNT_ROOT) + os.sep)),
+            })
+        inherited_next = {"transport": transport, "removable": removable, "model": model}
+        for child in item.get("children") or []:
+            visit(child, path or parent, inherited_next)
+
+    for device in _storage_lsblk():
+        visit(device)
+    # Root first, then internal disks/partitions, then removable/USB devices.
+    result.sort(key=lambda row: (row.get("mountpoint") != "/", row.get("external", False),
+                                 row.get("parent") != "", row.get("path", "")))
+    return result
+
+
+def cmd_storage_list(_s, a):
+    a = a or {}
+    if not isinstance(a, dict):
+        raise CmdError("E_ARGS", "args must be object")
+    try:
+        offset = max(0, int(a.get("offset", 0)))
+        limit = max(1, min(int(a.get("limit", STORAGE_PAGE_MAX)), STORAGE_PAGE_MAX))
+    except (TypeError, ValueError):
+        raise CmdError("E_ARGS", "offset and limit must be integers")
+    rows = storage_rows()
+    page = rows[offset:offset + limit]
+    # Keep cursor semantics correct when device metadata is unusually long.
+    while len(page) > 1 and len(jdump({"devices": page}).encode("utf-8")) > 3400:
+        page.pop()
+    next_offset = offset + len(page)
+    return {"devices": page, "count": len(rows), "next_offset": next_offset,
+            "eof": next_offset >= len(rows)}
+
+
+def _storage_find(path):
+    if not isinstance(path, str) or not path.startswith("/dev/") or "\x00" in path:
+        raise CmdError("E_STORAGE_ARGS", "device must be a discovered /dev path")
+    row = next((item for item in storage_rows() if item.get("path") == path), None)
+    if not row:
+        raise CmdError("E_STORAGE_NOTFOUND", "block device is no longer present")
+    return row
+
+
+def _mount_name(row):
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", row.get("name") or "volume").strip(".-")
+    return (base or "volume")[:80]
+
+
+def cmd_storage_mount(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_STORAGE_ARGS", "args must be object")
+    with STORAGE_LOCK:
+        row = _storage_find(a.get("path"))
+        if row.get("mountpoint"):
+            return {"path": row["path"], "mountpoint": row["mountpoint"], "mounted": True}
+        if not row.get("can_mount"):
+            raise CmdError("E_STORAGE_ARGS", "device has no mountable writable filesystem")
+        os.makedirs(STORAGE_MOUNT_ROOT, mode=0o755, exist_ok=True)
+        target = os.path.join(STORAGE_MOUNT_ROOT, _mount_name(row))
+        os.makedirs(target, mode=0o755, exist_ok=True)
+        rc, _out, err = run(["mount", "-o", "nosuid,nodev", "--", row["path"], target], timeout=30)
+        if rc != 0:
+            try:
+                os.rmdir(target)
+            except OSError:
+                pass
+            raise CmdError("E_STORAGE_MOUNT", (err or "mount failed").strip()[:200])
+        return {"path": row["path"], "mountpoint": target, "mounted": True}
+
+
+def cmd_storage_unmount(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_STORAGE_ARGS", "args must be object")
+    with STORAGE_LOCK:
+        row = _storage_find(a.get("path"))
+        target = row.get("mountpoint") or ""
+        root = os.path.realpath(STORAGE_MOUNT_ROOT) + os.sep
+        if not target or not os.path.realpath(target).startswith(root):
+            raise CmdError("E_STORAGE_ARGS", "only App-mounted filesystems can be unmounted")
+        rc, _out, err = run(["umount", "--", target], timeout=30)
+        if rc != 0:
+            raise CmdError("E_STORAGE_MOUNT", (err or "unmount failed").strip()[:200])
+        try:
+            os.rmdir(target)
+        except OSError:
+            pass
+        return {"path": row["path"], "mountpoint": target, "mounted": False}
+
+
 # ------------------------------------------------------------------ pwr.*
 def cmd_pwr_reboot(_s, a):
     if not isinstance(a, dict) or a.get("confirm") != "REBOOT":
@@ -1521,10 +1690,11 @@ def cmd_pwr_rtc_set(_s, a):
                 dt += timedelta(days=1)
         else:
             raise CmdError("E_ARGS", "at is in the past")
-    st = load_state()
-    st["rtc"] = {"at": dt.strftime("%Y-%m-%dT%H:%M"), "repeat": repeat,
-                 "enabled": enabled}
-    save_state(st)
+    with STATE_LOCK:
+        st = load_state()
+        st["rtc"] = {"at": dt.strftime("%Y-%m-%dT%H:%M"), "repeat": repeat,
+                     "enabled": enabled}
+        save_state(st)
     if not enabled:
         with open("/sys/class/rtc/rtc0/wakealarm", "w") as f:
             f.write("0\n")
@@ -1935,7 +2105,14 @@ def cmd_file_upload_commit(sess, a):
         record["fd"] = None
         if not record["overwrite"] and os.path.lexists(record["target"]):
             raise CmdError("E_FILE_EXISTS", "destination appeared during upload")
-        os.chmod(record["temporary"], record["mode"])
+        try:
+            os.chmod(record["temporary"], record["mode"])
+        except OSError as error:
+            # FAT/exFAT/NTFS may not implement POSIX mode bits.
+            unsupported = {errno.EPERM, errno.EACCES, errno.EINVAL,
+                           getattr(errno, "ENOTSUP", 95), getattr(errno, "EOPNOTSUPP", 95)}
+            if error.errno not in unsupported:
+                raise
         os.replace(record["temporary"], record["target"])
     except CmdError:
         _file_upload_drop(sess, upload_id)
@@ -1956,6 +2133,229 @@ def cmd_file_upload_abort(sess, a):
 
 
 # ------------------------------------------------------------------ proxy.*
+def _proxy_sub_state(state=None):
+    state = load_state() if state is None else state
+    value = state.get("proxy_subscriptions", {})
+    if not isinstance(value, dict):
+        value = {}
+    items = value.get("items")
+    if not isinstance(items, list):
+        items = []
+    valid = []
+    for item in items:
+        if (isinstance(item, dict) and isinstance(item.get("id"), str)
+                and isinstance(item.get("name"), str) and isinstance(item.get("url"), str)):
+            valid.append({"id": item["id"], "name": item["name"], "url": item["url"]})
+    active_id = value.get("active_id") if isinstance(value.get("active_id"), str) else ""
+    return state, valid, active_id
+
+
+def _proxy_sub_url(value):
+    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 2048:
+        raise CmdError("E_PROXY_SUB_ARGS", "subscription URL must be 1..2048 bytes")
+    if any(ord(ch) < 32 for ch in value):
+        raise CmdError("E_PROXY_SUB_ARGS", "subscription URL contains control characters")
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise CmdError("E_PROXY_SUB_ARGS", "subscription URL must be absolute http(s)")
+    return value
+
+
+def _proxy_sub_public(item):
+    parsed = urllib.parse.urlparse(item["url"])
+    shown = (parsed.hostname or "") + (parsed.path or "")
+    if parsed.query:
+        shown += "?…"
+    return {"id": item["id"], "name": item["name"], "url_hint": _utf8_prefix(shown, 128)}
+
+
+def cmd_proxy_sub_list(_s, _a):
+    _state, items, active_id = _proxy_sub_state()
+    return {"items": [_proxy_sub_public(item) for item in items],
+            "active_id": active_id,
+            "config_ready": bool(MIHOMO_API and os.path.isfile(MIHOMO_CONFIG)),
+            "config_path": MIHOMO_CONFIG if os.path.isfile(MIHOMO_CONFIG) else ""}
+
+
+def cmd_proxy_sub_save(_s, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_PROXY_SUB_ARGS", "args must be object")
+    name = a.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name.strip().encode("utf-8")) > 80:
+        raise CmdError("E_PROXY_SUB_ARGS", "name must be 1..80 bytes")
+    name, url = name.strip(), _proxy_sub_url(a.get("url"))
+    requested_id = a.get("id")
+    if requested_id is not None and (not isinstance(requested_id, str)
+                                     or not re.fullmatch(r"[0-9a-f]{12}", requested_id)):
+        raise CmdError("E_PROXY_SUB_ARGS", "invalid subscription id")
+    with STATE_LOCK:
+        state, items, active_id = _proxy_sub_state()
+        sub_id = requested_id or uuid.uuid4().hex[:12]
+        replaced = False
+        for index, item in enumerate(items):
+            if item["id"] == sub_id:
+                items[index] = {"id": sub_id, "name": name, "url": url}
+                replaced = True
+                break
+        if not replaced:
+            if len(items) >= 12:
+                raise CmdError("E_PROXY_SUB_SIZE", "at most 12 subscriptions are allowed")
+            items.append({"id": sub_id, "name": name, "url": url})
+        state["proxy_subscriptions"] = {"items": items, "active_id": active_id}
+        save_state(state)
+    return dict(_proxy_sub_public(next(item for item in items if item["id"] == sub_id)),
+                saved=True)
+
+
+def _proxy_config_group(config):
+    groups = config.get("proxy-groups")
+    if not isinstance(groups, list):
+        raise CmdError("E_PROXY_CONFIG", "mihomo config has no proxy-groups list")
+    candidates = [item for item in groups if isinstance(item, dict)
+                  and isinstance(item.get("name"), str)]
+    if MIHOMO_GROUP:
+        for item in candidates:
+            if item["name"] == MIHOMO_GROUP:
+                return item
+        raise CmdError("E_PROXY_CONFIG", "configured selector group is absent from config")
+    preferred = ("PROXY", "Proxy", "proxy", "节点选择", "代理", "GLOBAL")
+    for name in preferred:
+        for item in candidates:
+            if item["name"] == name:
+                return item
+    selectors = [item for item in candidates if str(item.get("type", "")).lower() == "select"]
+    if not selectors:
+        raise CmdError("E_PROXY_CONFIG", "mihomo config has no selectable proxy group")
+    return selectors[0]
+
+
+def _proxy_config_payload(url):
+    try:
+        import yaml
+        with open(MIHOMO_CONFIG, "r", encoding="utf-8") as source:
+            config = yaml.safe_load(source) or {}
+    except Exception as error:
+        raise CmdError("E_PROXY_CONFIG", "cannot read mihomo config: %s" % error)
+    if not isinstance(config, dict):
+        raise CmdError("E_PROXY_CONFIG", "mihomo config root must be an object")
+    providers = config.setdefault("proxy-providers", {})
+    if not isinstance(providers, dict):
+        raise CmdError("E_PROXY_CONFIG", "proxy-providers must be an object")
+    providers[MIHOMO_PROVIDER] = {
+        "type": "http",
+        "url": url,
+        "path": "./proxy_providers/%s.yaml" % MIHOMO_PROVIDER,
+        "interval": 3600,
+        "health-check": {"enable": True, "url": MIHOMO_TEST_URL,
+                         "interval": 300, "timeout": 5000, "lazy": True},
+    }
+    group = _proxy_config_group(config)
+    use = group.setdefault("use", [])
+    if not isinstance(use, list):
+        raise CmdError("E_PROXY_CONFIG", "selected proxy group use field must be a list")
+    if MIHOMO_PROVIDER not in use:
+        use.append(MIHOMO_PROVIDER)
+    try:
+        payload = yaml.safe_dump(config, default_flow_style=False, allow_unicode=True,
+                                 sort_keys=False)
+    except Exception as error:
+        raise CmdError("E_PROXY_CONFIG", "cannot serialize mihomo config: %s" % error)
+    return payload, group["name"]
+
+
+def _write_proxy_config(payload):
+    directory = os.path.dirname(MIHOMO_CONFIG) or "."
+    backup_dir = os.path.join(BACKUP_ROOT, "mihomo-backups")
+    os.makedirs(backup_dir, mode=0o700, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    backup = os.path.join(backup_dir, "config-%s.yaml" % stamp)
+    shutil.copy2(MIHOMO_CONFIG, backup)
+    with open(MIHOMO_CONFIG, "rb") as source:
+        original = source.read()
+    info = os.stat(MIHOMO_CONFIG)
+    mode, owner = stat.S_IMODE(info.st_mode), (info.st_uid, info.st_gid)
+    temporary = os.path.join(directory, ".%s.bt-remote-%s" % (
+        os.path.basename(MIHOMO_CONFIG), uuid.uuid4().hex[:8]))
+    try:
+        with open(temporary, "w", encoding="utf-8") as target:
+            target.write(payload)
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temporary, mode)
+        os.chown(temporary, owner[0], owner[1])
+        os.replace(temporary, MIHOMO_CONFIG)
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+    return original, mode, owner, backup
+
+
+def _restore_proxy_config(original, mode, owner):
+    directory = os.path.dirname(MIHOMO_CONFIG) or "."
+    temporary = os.path.join(directory, ".%s.bt-remote-restore-%s" % (
+        os.path.basename(MIHOMO_CONFIG), uuid.uuid4().hex[:8]))
+    with open(temporary, "wb") as target:
+        target.write(original)
+        target.flush()
+        os.fsync(target.fileno())
+    os.chmod(temporary, mode)
+    os.chown(temporary, owner[0], owner[1])
+    os.replace(temporary, MIHOMO_CONFIG)
+
+
+@_proxy_lock
+def cmd_proxy_sub_apply(_s, a):
+    if not isinstance(a, dict) or not isinstance(a.get("id"), str):
+        raise CmdError("E_PROXY_SUB_ARGS", "subscription id required")
+    _state, items, _active_id = _proxy_sub_state()
+    item = next((entry for entry in items if entry["id"] == a["id"]), None)
+    if not item:
+        raise CmdError("E_PROXY_SUB_NOTFOUND", "subscription not found")
+    if not MIHOMO_API or not os.path.isfile(MIHOMO_CONFIG):
+        raise CmdError("E_PROXY_CONFIG", "mihomo API or config path is not configured")
+    payload, group = _proxy_config_payload(item["url"])
+    try:
+        original, mode, owner, backup = _write_proxy_config(payload)
+    except OSError as error:
+        raise CmdError("E_PROXY_CONFIG", "cannot back up or write mihomo config: %s" % error)
+    try:
+        _proxy_http("PUT", "/configs?force=true", {"payload": payload}, timeout=30.0)
+    except CmdError as apply_error:
+        try:
+            _restore_proxy_config(original, mode, owner)
+            try:
+                _proxy_http("PUT", "/configs?force=true",
+                            {"payload": original.decode("utf-8", "replace")}, timeout=30.0)
+            except CmdError as rollback_error:
+                log("mihomo rollback reload failed: %s" % rollback_error.msg, logging.ERROR)
+        except OSError as rollback_error:
+            log("mihomo config file rollback failed: %s" % rollback_error, logging.ERROR)
+        raise apply_error
+    with STATE_LOCK:
+        state, current, _old = _proxy_sub_state()
+        state["proxy_subscriptions"] = {"items": current, "active_id": item["id"]}
+        save_state(state)
+    return {"id": item["id"], "name": item["name"], "group": group,
+            "provider": MIHOMO_PROVIDER, "backup": backup, "applied": True}
+
+
+def cmd_proxy_sub_remove(_s, a):
+    if not isinstance(a, dict) or not isinstance(a.get("id"), str):
+        raise CmdError("E_PROXY_SUB_ARGS", "subscription id required")
+    with STATE_LOCK:
+        state, items, active_id = _proxy_sub_state()
+        if a["id"] == active_id:
+            raise CmdError("E_PROXY_SUB_ACTIVE", "select another subscription before deleting this one")
+        kept = [item for item in items if item["id"] != a["id"]]
+        if len(kept) == len(items):
+            raise CmdError("E_PROXY_SUB_NOTFOUND", "subscription not found")
+        state["proxy_subscriptions"] = {"items": kept, "active_id": active_id}
+        save_state(state)
+    return {"id": a["id"], "removed": True}
+
+
 def cmd_proxy_status(_s, a):
     a = a or {}
     if not isinstance(a, dict):
@@ -2302,6 +2702,9 @@ COMMANDS = {
     "net.wifi.connect": cmd_net_wifi_connect,
     "net.wifi.forget": cmd_net_wifi_forget,
     "device.usb.list": cmd_device_usb_list,
+    "storage.list": cmd_storage_list,
+    "storage.mount": cmd_storage_mount,
+    "storage.unmount": cmd_storage_unmount,
     "pwr.reboot": cmd_pwr_reboot,
     "pwr.poweroff": cmd_pwr_poweroff,
     "pwr.rtc.get": cmd_pwr_rtc_get,
@@ -2328,6 +2731,10 @@ COMMANDS = {
     "proxy.mode": cmd_proxy_mode,
     "proxy.onoff": cmd_proxy_onoff,
     "proxy.delay": cmd_proxy_delay,
+    "proxy.sub.list": cmd_proxy_sub_list,
+    "proxy.sub.save": cmd_proxy_sub_save,
+    "proxy.sub.apply": cmd_proxy_sub_apply,
+    "proxy.sub.remove": cmd_proxy_sub_remove,
     "term.caps": cmd_term_caps,
     "term.exec": cmd_term_exec,
     "term.shell": cmd_term_shell,

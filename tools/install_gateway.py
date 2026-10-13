@@ -149,7 +149,8 @@ def main(argv=None):
         run(["apt-get", "update"], timeout=600)
         run(["apt-get", "install", "-y", *PACKAGES], timeout=1200)
     run(["/usr/bin/python3", "-c", "import dbus, gi, yaml; from gi.repository import GLib"])
-    for command in ("busctl", "bluetoothctl", "btmgmt", "hciconfig", "ip", "iw", "ping", "flock", "timeout", "netplan"):
+    for command in ("busctl", "bluetoothctl", "btmgmt", "hciconfig", "ip", "iw", "ping",
+                    "flock", "timeout", "netplan", "lsblk", "mount", "umount"):
         if not shutil.which(command):
             raise RuntimeError("Missing dependency: " + command)
     install(prefix, live=True)
