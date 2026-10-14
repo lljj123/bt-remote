@@ -387,6 +387,10 @@
           <div class="nm">代理开关<div class="sub" id="proxyStatus">读取中…</div></div>
           <div class="switch disabled" id="proxySwitch"><i></i></div>
         </div>
+        <div class="li">
+          <div class="nm">TUN 透明代理<div class="sub" id="proxyTunStatus">读取中…</div></div>
+          <div class="switch disabled" id="proxyTunSwitch"><i></i></div>
+        </div>
         <div class="mode-bar">
           <button data-mode="rule" class="active">绕过大陆</button>
           <button data-mode="global">全局</button>
@@ -1231,17 +1235,24 @@ document.querySelectorAll(".fold-head").forEach(h => {
 
 /* ============ 代理控制（网关转发到 mihomo external-controller） ============ */
 let proxyState = { configured: false, reachable: false, running: false,
-  mode: "direct", group: "", current: "", nodes: [], busy: false, error: "" };
+  mode: "direct", group: "", current: "", nodes: [], tun_enabled: false,
+  tun_device: "", tun_configurable: false, busy: false, error: "" };
+let demoProxyTun = true, demoProxyMode = "rule";
 
 function renderProxy() {
   const p = proxyState;
   const usable = p.configured && p.reachable && !p.busy;
   $("#proxySwitch").classList.toggle("on", p.running);
   $("#proxySwitch").classList.toggle("disabled", !usable);
+  $("#proxyTunSwitch").classList.toggle("on", !!p.tun_enabled);
+  $("#proxyTunSwitch").classList.toggle("disabled", !usable || !p.tun_configurable);
   let status = p.busy ? "操作中…" : p.configured ? (p.reachable ?
     (p.running ? "代理路由已启用" : "当前为直连 · 订阅和节点已保留") : "Mihomo 不可达") : "Mihomo 未配置";
   if (p.error) status += " · " + p.error;
   $("#proxyStatus").textContent = status;
+  $("#proxyTunStatus").textContent = !p.tun_configurable ? "需要新版网关和可写的 Mihomo 配置" :
+    (p.tun_enabled ? "已开启 · " + (p.tun_device || "Meta") + " · 板端程序自动经过 Mihomo" :
+      "已关闭 · 不创建虚拟网卡，仅显式代理端口生效");
   document.querySelectorAll(".mode-bar button").forEach(b => {
     b.classList.toggle("active", b.dataset.mode === p.mode);
     b.disabled = !usable;
@@ -1271,11 +1282,11 @@ function renderProxy() {
   });
 }
 
-async function proxyAction(name, args, message) {
+async function proxyAction(name, args, message, timeoutMs) {
   if (proxyState.busy) return;
   proxyState.busy = true; proxyState.error = ""; renderProxy();
   try {
-    await send(name, args, 20000);
+    await send(name, args, timeoutMs || 20000);
     if (message) toast(message);
     await loadProxy(false);
   } catch (e) {
@@ -1288,8 +1299,14 @@ $("#proxySwitch").onclick = () => {
   if (proxyState.configured && proxyState.reachable)
     proxyAction("proxy.onoff", { on: !proxyState.running }, !proxyState.running ? "代理已开启" : "已切到直连，订阅和节点不会清除");
 };
+$("#proxyTunSwitch").onclick = () => {
+  if (proxyState.configured && proxyState.reachable && proxyState.tun_configurable)
+    proxyAction("proxy.tun", { on: !proxyState.tun_enabled },
+      !proxyState.tun_enabled ? "TUN 已开启，板端程序将透明经过代理" : "TUN 已关闭，Meta 虚拟网卡已移除", 90000);
+};
 document.querySelectorAll(".mode-bar button").forEach(b => {
-  b.onclick = () => proxyAction("proxy.mode", { mode: b.dataset.mode }, "代理模式已更新");
+  b.onclick = () => proxyAction("proxy.mode", { mode: b.dataset.mode },
+    b.dataset.mode === "rule" ? "已启用大陆直连、其他流量走节点" : "代理模式已更新", 120000);
 });
 $("#btnProxyClear").onclick = () => proxyAction("proxy.mode", { mode: "direct" }, "已切到全部直连，订阅和节点不会清除");
 $("#btnProxyRefresh").onclick = () => loadProxy(true);
@@ -1394,8 +1411,9 @@ $("#btnProxySubRemove").onclick = async () => {
 async function loadProxy(refresh) {
   if (!authed && isNative) return;
   if (!isNative) {
-    proxyState = { configured: true, reachable: true, running: true, mode: "rule",
+    proxyState = { configured: true, reachable: true, running: demoProxyMode !== "direct", mode: demoProxyMode,
       group: "PROXY", current: "日本 · 东京-01", busy: false, error: "",
+      tun_enabled: demoProxyTun, tun_device: demoProxyTun ? "Meta" : "", tun_configurable: true,
       nodes: [{ name: "香港 · 01", type: "Shadowsocks", delay: 58 },
         { name: "日本 · 东京-01", type: "Shadowsocks", delay: 45 },
         { name: "新加坡 · 02", type: "Vmess", delay: 89 }] };
@@ -1403,14 +1421,16 @@ async function loadProxy(refresh) {
   }
   if (gatewayCaps.length && !gatewayCaps.includes("proxy")) {
     proxyState = { configured: false, reachable: false, running: false, mode: "direct",
-      group: "", current: "", nodes: [], busy: false, error: "需升级网关" };
+      group: "", current: "", nodes: [], tun_enabled: false, tun_device: "",
+      tun_configurable: false, busy: false, error: "需升级网关" };
     renderProxy(); return;
   }
   proxyState.busy = true; proxyState.error = ""; renderProxy();
   try {
     const d = await send("proxy.status", { refresh: !!refresh }, refresh ? 45000 : 20000);
     proxyState = Object.assign({ configured: false, reachable: false, running: false,
-      mode: "direct", group: "", current: "", nodes: [], busy: false, error: "" }, d);
+      mode: "direct", group: "", current: "", nodes: [], tun_enabled: false,
+      tun_device: "", tun_configurable: false, busy: false, error: "" }, d);
     proxyState.busy = false;
     if (d.error) proxyState.error = d.error;
     renderProxy();
@@ -3139,6 +3159,21 @@ function startDemo() {
     if (m.name === "proxy.sub.save") return ok({ id: "demo00000002", name: m.args.name, saved: true });
     if (m.name === "proxy.sub.apply") return ok({ id: m.args.id, applied: true, group: "PROXY" });
     if (m.name === "proxy.sub.remove") return ok({ id: m.args.id, removed: true });
+    if (m.name === "proxy.tun") {
+      demoProxyTun = !!m.args.on;
+      return ok({ accepted: true, tun_enabled: demoProxyTun,
+        tun_device: demoProxyTun ? "Meta" : "" });
+    }
+    if (m.name === "proxy.mode") {
+      demoProxyMode = m.args.mode;
+      return ok({ accepted: true, mode: demoProxyMode,
+        bypass_mainland: demoProxyMode === "rule" });
+    }
+    if (m.name === "proxy.onoff") {
+      demoProxyMode = m.args.on ? "rule" : "direct";
+      return ok({ accepted: true, mode: demoProxyMode, on: !!m.args.on });
+    }
+    if (m.name === "proxy.switch") return ok({ accepted: true, name: m.args.name });
     if (m.name === "file.caps") return ok({ root: "/", chunk_bytes: 1536,
       max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true, copy: true });
     if (m.name === "file.list") {

@@ -2327,7 +2327,7 @@ def _proxy_config_group(config):
     return selectors[0]
 
 
-def _proxy_config_payload(url):
+def _proxy_config_load():
     try:
         import yaml
         with open(MIHOMO_CONFIG, "r", encoding="utf-8") as source:
@@ -2336,6 +2336,20 @@ def _proxy_config_payload(url):
         raise CmdError("E_PROXY_CONFIG", "cannot read mihomo config: %s" % error)
     if not isinstance(config, dict):
         raise CmdError("E_PROXY_CONFIG", "mihomo config root must be an object")
+    return config
+
+
+def _proxy_config_dump(config):
+    try:
+        import yaml
+        return yaml.safe_dump(config, default_flow_style=False, allow_unicode=True,
+                              sort_keys=False)
+    except Exception as error:
+        raise CmdError("E_PROXY_CONFIG", "cannot serialize mihomo config: %s" % error)
+
+
+def _proxy_config_payload(url):
+    config = _proxy_config_load()
     providers = config.setdefault("proxy-providers", {})
     if not isinstance(providers, dict):
         raise CmdError("E_PROXY_CONFIG", "proxy-providers must be an object")
@@ -2353,12 +2367,7 @@ def _proxy_config_payload(url):
         raise CmdError("E_PROXY_CONFIG", "selected proxy group use field must be a list")
     if MIHOMO_PROVIDER not in use:
         use.append(MIHOMO_PROVIDER)
-    try:
-        payload = yaml.safe_dump(config, default_flow_style=False, allow_unicode=True,
-                                 sort_keys=False)
-    except Exception as error:
-        raise CmdError("E_PROXY_CONFIG", "cannot serialize mihomo config: %s" % error)
-    return payload, group["name"]
+    return _proxy_config_dump(config), group["name"]
 
 
 def _write_proxy_config(payload):
@@ -2403,23 +2412,13 @@ def _restore_proxy_config(original, mode, owner):
     os.replace(temporary, MIHOMO_CONFIG)
 
 
-@_proxy_lock
-def cmd_proxy_sub_apply(_s, a):
-    if not isinstance(a, dict) or not isinstance(a.get("id"), str):
-        raise CmdError("E_PROXY_SUB_ARGS", "subscription id required")
-    _state, items, _active_id = _proxy_sub_state()
-    item = next((entry for entry in items if entry["id"] == a["id"]), None)
-    if not item:
-        raise CmdError("E_PROXY_SUB_NOTFOUND", "subscription not found")
-    if not MIHOMO_API or not os.path.isfile(MIHOMO_CONFIG):
-        raise CmdError("E_PROXY_CONFIG", "mihomo API or config path is not configured")
-    payload, group = _proxy_config_payload(item["url"])
+def _apply_proxy_config(payload, timeout=30.0):
     try:
         original, mode, owner, backup = _write_proxy_config(payload)
     except OSError as error:
         raise CmdError("E_PROXY_CONFIG", "cannot back up or write mihomo config: %s" % error)
     try:
-        _proxy_http("PUT", "/configs?force=true", {"payload": payload}, timeout=30.0)
+        _proxy_http("PUT", "/configs?force=true", {"payload": payload}, timeout=timeout)
     except CmdError as apply_error:
         try:
             _restore_proxy_config(original, mode, owner)
@@ -2431,6 +2430,125 @@ def cmd_proxy_sub_apply(_s, a):
         except OSError as rollback_error:
             log("mihomo config file rollback failed: %s" % rollback_error, logging.ERROR)
         raise apply_error
+    return backup
+
+
+def _proxy_physical_dns():
+    candidates = list(netplan_dns(WLAN))
+    gateway = default_gateway()
+    if gateway:
+        candidates.append(gateway)
+    result = []
+    for value in candidates:
+        try:
+            socket.inet_pton(socket.AF_INET, value)
+        except OSError:
+            continue
+        if value.startswith("127.") or value.startswith("198.18."):
+            continue
+        if value not in result:
+            result.append(value)
+    # Public mainland resolvers are only a last resort when DHCP exposes no DNS.
+    return result[:2] or ["223.5.5.5", "119.29.29.29"]
+
+
+def _proxy_configure_tun(config, enabled):
+    tun = config.setdefault("tun", {})
+    if not isinstance(tun, dict):
+        raise CmdError("E_PROXY_CONFIG", "mihomo tun config must be an object")
+    tun["enable"] = enabled
+    if not enabled:
+        return
+    tun.setdefault("stack", "mixed")
+    tun.setdefault("auto-route", True)
+    tun.setdefault("auto-detect-interface", True)
+    tun.setdefault("dns-hijack", ["any:53"])
+    excluded = tun.setdefault("route-exclude-address", [])
+    if not isinstance(excluded, list):
+        raise CmdError("E_PROXY_CONFIG", "tun route-exclude-address must be a list")
+    for subnet in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"):
+        if subnet not in excluded:
+            excluded.append(subnet)
+
+    dns = config.setdefault("dns", {})
+    if not isinstance(dns, dict):
+        raise CmdError("E_PROXY_CONFIG", "mihomo dns config must be an object")
+    dns["enable"] = True
+    dns.setdefault("ipv6", False)
+    dns["enhanced-mode"] = "fake-ip"
+    dns.setdefault("fake-ip-range", "198.18.0.1/16")
+    dns.setdefault("listen", "127.0.0.1:1053")
+    physical_dns = _proxy_physical_dns()
+    # Fake-IP preserves proxied hostnames for remote resolution. Physical DNS is
+    # therefore only used for DIRECT destinations, bootstrap and node hostnames;
+    # using "system" here would loop back through TUN's own DNS hijack.
+    dns["default-nameserver"] = list(physical_dns)
+    dns["nameserver"] = list(physical_dns)
+    dns["proxy-server-nameserver"] = list(physical_dns)
+    filters = dns.get("fake-ip-filter")
+    if not isinstance(filters, list):
+        filters = []
+    filters = [value for value in filters if value not in ("*", "+.*")]
+    for value in ("*.lan", "*.local"):
+        if value not in filters:
+            filters.append(value)
+    dns["fake-ip-filter"] = filters
+
+
+def _proxy_bypass_rules(config):
+    group_name = _proxy_config_group(config)["name"]
+    rules = config.get("rules")
+    if rules is None:
+        rules = []
+    if not isinstance(rules, list):
+        raise CmdError("E_PROXY_CONFIG", "mihomo rules must be a list")
+    direct_rules = [
+        "GEOSITE,private,DIRECT",
+        "GEOIP,private,DIRECT,no-resolve",
+        "GEOSITE,cn,DIRECT",
+        "GEOIP,CN,DIRECT,no-resolve",
+    ]
+    kept = []
+    for rule in rules:
+        if not isinstance(rule, str):
+            continue
+        if rule.upper().startswith("MATCH,") or rule in direct_rules:
+            continue
+        kept.append(rule)
+    wanted = direct_rules + kept + ["MATCH," + group_name]
+    changed = wanted != rules
+    config["rules"] = wanted
+    return group_name, changed
+
+
+def _proxy_ensure_bypass_rules():
+    if not os.path.isfile(MIHOMO_CONFIG):
+        raise CmdError("E_PROXY_CONFIG", "mihomo config path is not configured")
+    config = _proxy_config_load()
+    group_name, changed = _proxy_bypass_rules(config)
+    if not changed:
+        return group_name, False, ""
+    current = str(_proxy_dict("GET", "/configs").get("mode", "rule")).lower()
+    if current in ("rule", "global", "direct"):
+        config["mode"] = current
+    backup = _apply_proxy_config(_proxy_config_dump(config), timeout=90.0)
+    if current == "global":
+        _proxy_select_global_group(_proxy_inventory())
+    return group_name, True, backup
+
+
+@_proxy_lock
+def cmd_proxy_sub_apply(_s, a):
+    if not isinstance(a, dict) or not isinstance(a.get("id"), str):
+        raise CmdError("E_PROXY_SUB_ARGS", "subscription id required")
+    _state, items, _active_id = _proxy_sub_state()
+    item = next((entry for entry in items if entry["id"] == a["id"]), None)
+    if not item:
+        raise CmdError("E_PROXY_SUB_NOTFOUND", "subscription not found")
+    if not MIHOMO_API or not os.path.isfile(MIHOMO_CONFIG):
+        raise CmdError("E_PROXY_CONFIG", "mihomo API or config path is not configured")
+    payload, group = _proxy_config_payload(item["url"])
+    backup = _apply_proxy_config(payload)
     with STATE_LOCK:
         state, current, _old = _proxy_sub_state()
         state["proxy_subscriptions"] = {"items": current, "active_id": item["id"]}
@@ -2463,7 +2581,9 @@ def cmd_proxy_status(_s, a):
         raise CmdError("E_ARGS", "refresh must be boolean")
     empty = {"configured": bool(MIHOMO_API), "reachable": False,
              "running": False, "version": "", "mode": "direct",
-             "group": MIHOMO_GROUP, "current": "", "nodes": []}
+             "group": MIHOMO_GROUP, "current": "", "nodes": [],
+             "tun_enabled": False, "tun_device": "",
+             "tun_configurable": bool(MIHOMO_API and os.path.isfile(MIHOMO_CONFIG))}
     if not MIHOMO_API:
         return empty
     try:
@@ -2489,6 +2609,7 @@ def cmd_proxy_status(_s, a):
             finally:
                 PROXY_LOCK.release()
         mode = str(configs.get("mode", "rule")).lower()
+        tun = configs.get("tun") if isinstance(configs.get("tun"), dict) else {}
         version = ""
         try:
             version_data = _proxy_dict("GET", "/version")
@@ -2498,7 +2619,10 @@ def cmd_proxy_status(_s, a):
         return {"configured": True, "reachable": True,
                 "running": mode != "direct", "version": version,
                 "mode": mode, "group": group_name,
-                "current": current, "nodes": nodes}
+                "current": current, "nodes": nodes,
+                "tun_enabled": tun.get("enable") is True,
+                "tun_device": str(tun.get("device", ""))[:64],
+                "tun_configurable": os.path.isfile(MIHOMO_CONFIG)}
     except CmdError as error:
         if error.code in ("E_PROXY_CONNECT", "E_PROXY_TIMEOUT", "E_PROXY_AUTH"):
             empty.update({"error": error.code, "message": error.msg})
@@ -2575,15 +2699,21 @@ def cmd_proxy_mode(_s, a):
     if mode not in ("rule", "global", "direct"):
         raise CmdError("E_ARGS", "mode must be rule|global|direct")
     global_target = ""
+    bypass_updated = False
     if mode == "global":
         # Mihomo's mode and its built-in GLOBAL selector are separate state.
         # Select the App-managed group before changing mode so traffic cannot
         # silently remain on DIRECT while the UI reports global mode.
         global_target = _proxy_select_global_group(_proxy_inventory())
+    elif mode == "rule":
+        _group, bypass_updated, _backup = _proxy_ensure_bypass_rules()
     _proxy_http("PATCH", "/configs", {"mode": mode})
     result = {"mode": mode, "accepted": True}
     if global_target:
         result["global_target"] = global_target
+    if mode == "rule":
+        result["bypass_mainland"] = True
+        result["rules_updated"] = bypass_updated
     return result
 
 
@@ -2592,8 +2722,35 @@ def cmd_proxy_onoff(_s, a):
     if not isinstance(a, dict) or type(a.get("on")) is not bool:
         raise CmdError("E_ARGS", "on must be boolean")
     mode = "rule" if a["on"] else "direct"
+    if a["on"]:
+        _proxy_ensure_bypass_rules()
     _proxy_http("PATCH", "/configs", {"mode": mode})
     return {"on": a["on"], "mode": mode, "accepted": True}
+
+
+@_proxy_lock
+def cmd_proxy_tun(_s, a):
+    if not isinstance(a, dict) or type(a.get("on")) is not bool:
+        raise CmdError("E_ARGS", "on must be boolean")
+    if not MIHOMO_API or not os.path.isfile(MIHOMO_CONFIG):
+        raise CmdError("E_PROXY_CONFIG", "mihomo API or config path is not configured")
+    enabled = a["on"]
+    runtime = _proxy_dict("GET", "/configs")
+    current_mode = str(runtime.get("mode", "rule")).lower()
+    config = _proxy_config_load()
+    _proxy_configure_tun(config, enabled)
+    if current_mode in ("rule", "global", "direct"):
+        config["mode"] = current_mode
+    backup = _apply_proxy_config(_proxy_config_dump(config), timeout=60.0)
+    if current_mode == "global":
+        _proxy_select_global_group(_proxy_inventory())
+    actual = _proxy_dict("GET", "/configs")
+    tun = actual.get("tun") if isinstance(actual.get("tun"), dict) else {}
+    if (tun.get("enable") is True) != enabled:
+        raise CmdError("E_PROXY_CONFIG", "mihomo did not apply requested TUN state")
+    return {"on": enabled, "tun_enabled": enabled,
+            "tun_device": str(tun.get("device", ""))[:64],
+            "backup": backup, "accepted": True}
 
 
 @_proxy_lock
@@ -2857,6 +3014,7 @@ COMMANDS = {
     "proxy.switch": cmd_proxy_switch,
     "proxy.mode": cmd_proxy_mode,
     "proxy.onoff": cmd_proxy_onoff,
+    "proxy.tun": cmd_proxy_tun,
     "proxy.delay": cmd_proxy_delay,
     "proxy.sub.list": cmd_proxy_sub_list,
     "proxy.sub.save": cmd_proxy_sub_save,

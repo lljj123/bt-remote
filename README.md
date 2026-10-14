@@ -78,7 +78,7 @@ BTG_MIHOMO_GROUP=PROXY
 BTG_MIHOMO_CONFIG=/etc/mihomo/config.yaml
 ```
 
-代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件、Selector 策略组和配置文件路径，随后执行 `sudo bt-remote restart`。App 可保存至多 12 个 Mihomo/Clash proxy-provider 订阅并选择应用，选择框只显示用户填写的机场名称，不回显订阅链接；关闭代理只切到直连，不删除订阅或节点选择。写入前会备份原配置到 `/etc/bt-gateway/mihomo-backups/`，控制器拒绝重载时自动恢复。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
+代理配置默认留空；请按实际 mihomo 配置填写 controller、secret 文件、Selector 策略组和配置文件路径，随后执行 `sudo bt-remote restart`。App 可保存至多 12 个 Mihomo/Clash proxy-provider 订阅并选择应用，选择框只显示用户填写的机场名称，不回显订阅链接；关闭代理只切到直连，不删除订阅或节点选择。TUN 透明代理使用独立开关，关闭后会移除 Mihomo 虚拟网卡；“绕过大陆”会持久写入私网和中国大陆直连规则。写入前会备份原配置到 `/etc/bt-gateway/mihomo-backups/`，控制器拒绝重载时自动恢复。已有 `gateway.env` 升级时不会被覆盖，需要手工补充这些变量。
 
 网关提供通用 `term.exec`，可在协议台中执行临时系统查询，不必再为每个查询增加专用网关命令。`term.exec` 与交互终端一样拥有 root 权限，具体协议见 [网关协议 v2](docs/gateway-protocol-v2.md)。App 概览不额外显示“自定义系统信息”卡片。
 

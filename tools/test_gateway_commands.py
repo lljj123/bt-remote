@@ -57,6 +57,7 @@ class FakeMihomo(BaseHTTPRequestHandler):
     mode = "rule"
     selected = "node-a"
     global_selected = "DIRECT"
+    tun_enabled = False
     reloaded_payload = ""
 
     def log_message(self, _format, *_args):
@@ -88,7 +89,9 @@ class FakeMihomo(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/configs":
-            return self.json({"mode": type(self).mode})
+            return self.json({"mode": type(self).mode,
+                              "tun": {"enable": type(self).tun_enabled,
+                                      "device": "Meta" if type(self).tun_enabled else ""}})
         if parsed.path == "/proxies":
             return self.json(type(self).proxies())
         if parsed.path == "/version":
@@ -111,7 +114,13 @@ class FakeMihomo(BaseHTTPRequestHandler):
     def do_PUT(self):
         parsed = urlparse(self.path)
         if parsed.path == "/configs":
+            import yaml
             type(self).reloaded_payload = self.body().get("payload", "")
+            config = yaml.safe_load(type(self).reloaded_payload) or {}
+            if config.get("mode") in ("rule", "global", "direct"):
+                type(self).mode = config["mode"]
+            tun = config.get("tun")
+            type(self).tun_enabled = bool(isinstance(tun, dict) and tun.get("enable"))
             return self.no_content()
         if parsed.path == "/proxies/PROXY":
             type(self).selected = self.body()["name"]
@@ -142,6 +151,7 @@ class GatewayCommandTests(unittest.TestCase):
         FakeMihomo.mode = "rule"
         FakeMihomo.selected = "node-a"
         FakeMihomo.global_selected = "DIRECT"
+        FakeMihomo.tun_enabled = False
         FakeMihomo.reloaded_payload = ""
 
     def test_storage_inventory_lists_internal_flash_and_usb(self):
@@ -325,6 +335,57 @@ class GatewayCommandTests(unittest.TestCase):
     def test_proxy_status_refreshes_delays(self):
         status = GATEWAY.cmd_proxy_status(None, {"refresh": True})
         self.assertEqual([node["delay"] for node in status["nodes"]], [45, 82])
+
+    def test_proxy_tun_is_persisted_and_reported(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.yaml"
+            config.write_text(
+                "proxy-groups:\n  - name: PROXY\n    type: select\n"
+                "    proxies: [DIRECT]\nrules: [MATCH,PROXY]\n"
+                "dns:\n  nameserver: [system]\n  fake-ip-filter: ['*']\n")
+            with mock.patch.object(GATEWAY, "MIHOMO_CONFIG", str(config)), \
+                    mock.patch.object(GATEWAY, "BACKUP_ROOT", str(root / "backups")), \
+                    mock.patch.object(GATEWAY, "netplan_dns", return_value=["192.168.2.1"]), \
+                    mock.patch.object(GATEWAY, "default_gateway", return_value="192.168.2.1"):
+                enabled = GATEWAY.cmd_proxy_tun(None, {"on": True})
+                status = GATEWAY.cmd_proxy_status(None, {})
+                data = yaml.safe_load(config.read_text())
+                self.assertTrue(enabled["tun_enabled"])
+                self.assertTrue(status["tun_enabled"])
+                self.assertEqual(status["tun_device"], "Meta")
+                self.assertTrue(data["tun"]["enable"])
+                self.assertIn("192.168.0.0/16", data["tun"]["route-exclude-address"])
+                self.assertEqual(data["dns"]["proxy-server-nameserver"], ["192.168.2.1"])
+                self.assertEqual(data["dns"]["nameserver"], ["192.168.2.1"])
+                self.assertNotIn("*", data["dns"]["fake-ip-filter"])
+                disabled = GATEWAY.cmd_proxy_tun(None, {"on": False})
+                data = yaml.safe_load(config.read_text())
+            self.assertFalse(disabled["tun_enabled"])
+            self.assertFalse(data["tun"]["enable"])
+
+    def test_rule_mode_installs_mainland_bypass_rules(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.yaml"
+            config.write_text(
+                "proxy-groups:\n  - name: PROXY\n    type: select\n"
+                "    proxies: [DIRECT]\nrules: [MATCH,PROXY]\n")
+            with mock.patch.object(GATEWAY, "MIHOMO_CONFIG", str(config)), \
+                    mock.patch.object(GATEWAY, "BACKUP_ROOT", str(root / "backups")):
+                changed = GATEWAY.cmd_proxy_mode(None, {"mode": "rule"})
+                rules = yaml.safe_load(config.read_text())["rules"]
+            self.assertTrue(changed["bypass_mainland"])
+            self.assertTrue(changed["rules_updated"])
+            self.assertEqual(rules[:4], [
+                "GEOSITE,private,DIRECT",
+                "GEOIP,private,DIRECT,no-resolve",
+                "GEOSITE,cn,DIRECT",
+                "GEOIP,CN,DIRECT,no-resolve",
+            ])
+            self.assertEqual(rules[-1], "MATCH,PROXY")
 
     def test_external_wifi_interface_can_be_selected(self):
         with tempfile.TemporaryDirectory() as directory:

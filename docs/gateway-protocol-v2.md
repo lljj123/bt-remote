@@ -66,7 +66,7 @@
 ```
 
 ```json
-{"configured":true,"reachable":true,"running":true,"version":"...","mode":"rule","group":"PROXY","current":"node-a","nodes":[{"name":"node-a","type":"Shadowsocks","delay":42,"selected":true}]}
+{"configured":true,"reachable":true,"running":true,"version":"...","mode":"rule","tun_enabled":true,"tun_device":"Meta","tun_configurable":true,"group":"PROXY","current":"node-a","nodes":[{"name":"node-a","type":"Shadowsocks","delay":42,"selected":true}]}
 ```
 
 `refresh=true` 会并发测试最多 32 个普通节点，命令可能需要数秒。`running`
@@ -78,10 +78,19 @@
 {"t":"cmd","id":3,"name":"proxy.switch","args":{"name":"node-b"}}
 {"t":"cmd","id":4,"name":"proxy.mode","args":{"mode":"global"}}
 {"t":"cmd","id":5,"name":"proxy.onoff","args":{"on":false}}
+{"t":"cmd","id":6,"name":"proxy.tun","args":{"on":true}}
 ```
 
 `proxy.onoff true` 切到 `rule`，`false` 切到 `direct`。关闭只改变模式，不会删除
-已保存订阅、provider 配置或当前节点选择。还提供底层兼容命令：
+已保存订阅、provider 配置或当前节点选择。`proxy.tun` 独立控制并持久化 TUN；开启时
+补齐自动路由、DNS 劫持、Fake-IP 和局域网排除配置，关闭后 Mihomo 会移除 TUN 虚拟
+网卡，但不会改变节点、模式或订阅。
+
+切换到 `rule`（App 显示为“绕过大陆”）时，网关会把私有地址与中国大陆
+GEOSITE/GEOIP 规则置于最前，最后使用 `MATCH,<BTG_MIHOMO_GROUP>`，并保留已有的
+非 MATCH 自定义规则。配置重载失败会自动恢复备份。
+
+还提供底层兼容命令：
 
 切换到 `global` 时，网关会先把 Mihomo 内置的 `GLOBAL` Selector 指向
 `BTG_MIHOMO_GROUP` 对应的策略组，再切换运行模式，避免界面显示全局而实际仍为

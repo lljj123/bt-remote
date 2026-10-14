@@ -26,7 +26,7 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 解析器按连接隔离，断线或连接任务取消后旧线程不能覆盖新连接。原生 SPP 层每秒统计实际收发字节，顶部持续显示蓝牙上传/下载速率。令牌使用 Android Keystore 加密存储，旧 localStorage 值在成功迁移后清除。
 
-概览页不显示额外的“自定义系统信息”卡片；通用 `term.exec` 仍可从协议台调用。“服务”页只保留代理与电源/RTC：代理卡片调用 `proxy.status/switch/mode/onoff` 和 `proxy.sub.*`，可保存并应用 Mihomo/Clash proxy-provider 订阅，选择框只显示机场名称；关闭代理只切换直连模式，不清除订阅或节点。需要板端配置 mihomo external-controller 与配置文件路径。
+概览页不显示额外的“自定义系统信息”卡片；通用 `term.exec` 仍可从协议台调用。“服务”页只保留代理与电源/RTC：代理卡片调用 `proxy.status/switch/mode/onoff/tun` 和 `proxy.sub.*`，可保存并应用 Mihomo/Clash proxy-provider 订阅，选择框只显示机场名称；关闭代理只切换直连模式，不清除订阅或节点。TUN 透明代理有独立开关，开启时创建 Mihomo 虚拟网卡并让板端程序自动经过代理，关闭后移除虚拟网卡。需要板端配置 mihomo external-controller 与配置文件路径。
 
 “文件”页替代旧的“日志”页签，提供返回历史、上一级和页内文件剪贴板，可复制文件、符号链接或目录后进入目标目录粘贴。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。上传及下载都校验 SHA256；小型 UTF-8 文本可以直接预览和原子保存。`storage.*` 每块板载闪存或 USB 存储只返回一个主文件系统，隐藏 eMMC boot/RPMB 与 zram/ram 实现设备；App 挂载后会成为文件页快捷入口。
 
