@@ -83,6 +83,10 @@
 `proxy.onoff true` 切到 `rule`，`false` 切到 `direct`。关闭只改变模式，不会删除
 已保存订阅、provider 配置或当前节点选择。还提供底层兼容命令：
 
+切换到 `global` 时，网关会先把 Mihomo 内置的 `GLOBAL` Selector 指向
+`BTG_MIHOMO_GROUP` 对应的策略组，再切换运行模式，避免界面显示全局而实际仍为
+`DIRECT`。成功响应会额外返回 `global_target`。
+
 - `proxy.groups {}`
 - `proxy.nodes {"group":"PROXY"}`
 - `proxy.select {"group":"PROXY","name":"node-b"}`

@@ -56,6 +56,7 @@ GATEWAY = load_gateway()
 class FakeMihomo(BaseHTTPRequestHandler):
     mode = "rule"
     selected = "node-a"
+    global_selected = "DIRECT"
     reloaded_payload = ""
 
     def log_message(self, _format, *_args):
@@ -76,6 +77,8 @@ class FakeMihomo(BaseHTTPRequestHandler):
     @classmethod
     def proxies(cls):
         return {"proxies": {
+            "GLOBAL": {"type": "Selector", "now": cls.global_selected,
+                       "all": ["DIRECT", "REJECT", "PROXY"]},
             "PROXY": {"type": "Selector", "now": cls.selected,
                       "all": ["node-a", "node-b"]},
             "node-a": {"type": "Shadowsocks", "history": [{"delay": 42}]},
@@ -113,6 +116,9 @@ class FakeMihomo(BaseHTTPRequestHandler):
         if parsed.path == "/proxies/PROXY":
             type(self).selected = self.body()["name"]
             return self.no_content()
+        if parsed.path == "/proxies/GLOBAL":
+            type(self).global_selected = self.body()["name"]
+            return self.no_content()
         return self.json({"error": "not found"}, 404)
 
 
@@ -135,6 +141,7 @@ class GatewayCommandTests(unittest.TestCase):
     def setUp(self):
         FakeMihomo.mode = "rule"
         FakeMihomo.selected = "node-a"
+        FakeMihomo.global_selected = "DIRECT"
         FakeMihomo.reloaded_payload = ""
 
     def test_storage_inventory_lists_internal_flash_and_usb(self):
@@ -305,8 +312,10 @@ class GatewayCommandTests(unittest.TestCase):
         selected = GATEWAY.cmd_proxy_switch(None, {"name": "node-b"})
         self.assertEqual(selected["name"], "node-b")
         self.assertEqual(FakeMihomo.selected, "node-b")
-        GATEWAY.cmd_proxy_mode(None, {"mode": "global"})
+        changed = GATEWAY.cmd_proxy_mode(None, {"mode": "global"})
         self.assertEqual(FakeMihomo.mode, "global")
+        self.assertEqual(FakeMihomo.global_selected, "PROXY")
+        self.assertEqual(changed["global_target"], "PROXY")
         GATEWAY.cmd_proxy_onoff(None, {"on": False})
         self.assertEqual(FakeMihomo.mode, "direct")
         self.assertEqual(FakeMihomo.selected, "node-b")

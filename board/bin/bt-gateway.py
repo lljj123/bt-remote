@@ -382,6 +382,26 @@ def _proxy_nodes(proxies, group):
     return current, nodes
 
 
+def _proxy_select_global_group(proxies):
+    """Route Mihomo global mode through the selector managed by the App."""
+    group_name, _group = _proxy_group(proxies)
+    # When GLOBAL itself is explicitly configured, its current choice is already
+    # the user's desired global target; selecting GLOBAL inside itself is invalid.
+    if group_name == "GLOBAL":
+        global_group = proxies.get("GLOBAL", {})
+        return global_group.get("now", "") if isinstance(global_group, dict) else ""
+    global_group = proxies.get("GLOBAL")
+    if not isinstance(global_group, dict) or global_group.get("type") != "Selector" \
+            or not isinstance(global_group.get("all"), list):
+        raise CmdError("E_PROXY_NOTFOUND", "mihomo GLOBAL selector not found")
+    if group_name not in global_group["all"]:
+        raise CmdError("E_PROXY_NOTFOUND",
+                       "configured selector group is not available in GLOBAL: %s" % group_name)
+    if global_group.get("now") != group_name:
+        _proxy_http("PUT", "/proxies/GLOBAL", {"name": group_name})
+    return group_name
+
+
 def _proxy_delay_value(name, timeout_ms):
     query = urllib.parse.urlencode({"url": MIHOMO_TEST_URL,
                                     "timeout": timeout_ms,
@@ -2554,8 +2574,17 @@ def cmd_proxy_mode(_s, a):
         return {"mode": str(data.get("mode", "rule")).lower(), "accepted": True}
     if mode not in ("rule", "global", "direct"):
         raise CmdError("E_ARGS", "mode must be rule|global|direct")
+    global_target = ""
+    if mode == "global":
+        # Mihomo's mode and its built-in GLOBAL selector are separate state.
+        # Select the App-managed group before changing mode so traffic cannot
+        # silently remain on DIRECT while the UI reports global mode.
+        global_target = _proxy_select_global_group(_proxy_inventory())
     _proxy_http("PATCH", "/configs", {"mode": mode})
-    return {"mode": mode, "accepted": True}
+    result = {"mode": mode, "accepted": True}
+    if global_target:
+        result["global_target"] = global_target
+    return result
 
 
 @_proxy_lock
