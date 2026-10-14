@@ -7,10 +7,13 @@
 旧客户端可继续只读取 `ver/caps`：
 
 ```json
-{"t":"auth","ok":true,"ver":2,"gateway_version":"2.0.0","build":"20261014","protocol_min":1,"protocol_max":2,"features":{"term":2,"file":2,"update":1},"caps":["sys","svc","net","pwr","log","term","proxy","file","device","storage","multiwifi","update"]}
+{"t":"auth","ok":true,"ver":2,"gateway_version":"2.0.1","build":"20261014","protocol_min":1,"protocol_max":2,"features":{"sys":2,"term":2,"file":2,"update":1},"caps":["sys","svc","net","pwr","log","term","proxy","file","device","storage","multiwifi","update"]}
 ```
 
 ## 单次通用命令
+
+`sys.metrics` 的 `bluetooth.rssi_dbm` 返回当前已鉴权 SPP 对端的 BR/EDR RSSI；
+本地 socket 或控制器暂不支持连接信息时为 `null`。
 
 `term.exec` 在 root 身份下通过不加载 profile 的 `/bin/bash` 执行一条命令。
 它不是白名单或沙箱，权限边界与交互 root 终端相同。命令最长 2048 字节，

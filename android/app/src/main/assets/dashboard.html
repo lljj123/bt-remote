@@ -41,9 +41,16 @@
   .dot.busy{background:var(--warn)}
   .dot.err{background:var(--bad)}
   .stat{font-size:12px;color:var(--muted);margin-left:auto}
-  .bt-rate{display:flex;align-items:center;gap:7px;padding:3px 8px;border:1px solid var(--line);
+  .bt-rate{display:flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--line);
     border-radius:999px;background:var(--panel);font:10px/1.4 var(--mono);color:var(--muted);white-space:nowrap}
   .bt-rate .up{color:#93c5fd}.bt-rate .down{color:#86efac}
+  .bt-signal{display:inline-flex;align-items:flex-end;gap:1px;height:11px;color:var(--dim)}
+  .bt-signal i{display:block;width:2px;border-radius:1px;background:currentColor}
+  .bt-signal i:nth-child(1){height:3px}.bt-signal i:nth-child(2){height:5px}
+  .bt-signal i:nth-child(3){height:8px}.bt-signal i:nth-child(4){height:11px}
+  .bt-signal.s1 i:nth-child(1),.bt-signal.s2 i:nth-child(-n+2),
+  .bt-signal.s3 i:nth-child(-n+3),.bt-signal.s4 i{color:#7dd3fc}
+  .bt-signal em{font-style:normal;margin-left:2px;line-height:11px;color:var(--muted)}
   .row2{display:flex;gap:8px;margin-top:8px}
   select,input,button{font:inherit;color:var(--text);background:var(--panel2);
     border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
@@ -154,7 +161,8 @@
   /* 终端全屏 */
   #tab-tty.fs{position:fixed;inset:0;z-index:80;background:var(--bg);overflow:hidden;padding:5px 6px}
   #tab-tty.fs .card{max-width:none;height:100%;display:flex;flex-direction:column;margin-bottom:0;padding:5px}
-  #tab-tty.fs .card>h2{display:none!important}
+  #tab-tty.fs .card>h2{display:flex!important;margin:0 0 4px;justify-content:flex-end;min-height:25px}
+  #tab-tty.fs .card>h2>:not(#btnShFull){display:none!important}
   #termWrap{height:46vh;min-height:240px;max-height:520px;overflow:hidden;
     overscroll-behavior:contain;background:#070a10;border-radius:8px}
   .term-pane{width:100%;height:100%}.term-pane.hide{display:none}
@@ -164,12 +172,10 @@
   #termWrap.selecting{box-shadow:0 0 0 2px var(--accent)}
   #tab-tty.fs #termWrap{flex:1;height:auto;max-height:none;min-height:0}
   #tab-tty.fs #ttyShellWrap{flex:1;min-height:0;display:flex;flex-direction:column}
-  #tab-tty.fs #ttyShellWrap>:not(.term-tabs):not(#termWrap):not(#kbBar):not(#ttyActions){display:none!important}
+  #tab-tty.fs #ttyShellWrap>:not(.term-tabs):not(#termWrap):not(#kbBar){display:none!important}
   #tab-tty.fs .term-tabs{display:flex!important;margin:0 0 4px;min-height:28px}
   #tab-tty.fs .term-tab{padding:3px 6px;font-size:10px}
   #tab-tty.fs #btnTermAdd{padding:2px 8px;font-size:14px}
-  #tab-tty.fs #ttyActions{display:flex;margin-top:4px;justify-content:flex-end}
-  #tab-tty.fs #ttyActions>:not(#btnShFull){display:none}
   #tab-tty.fs #btnShFull{flex:0 0 auto!important;padding:3px 7px!important;font-size:10px;line-height:1.2}
   .kb{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:7px}
   .kb-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;
@@ -197,6 +203,13 @@
   .term-tab .term-close{border:0;background:transparent;padding:0;color:var(--dim);font-size:14px;line-height:1}
   .term-tab.running::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ok)}
   #btnTermAdd{flex:0 0 auto;padding:3px 9px;font-size:16px;line-height:1.2}
+  .tty-head{display:flex;align-items:center;gap:5px;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+  .tty-head::-webkit-scrollbar{display:none}
+  .tty-head>button{flex:0 0 auto;padding:4px 7px;font-size:10px;border-radius:7px;font-weight:400}
+  .tty-head .ttyStat{flex:0 0 auto;font-size:10px;color:var(--dim);font-weight:400}
+  .tty-head .seg{display:flex;gap:3px;margin-left:auto;flex:0 0 auto}
+  .tty-head .seg button{padding:4px 7px;font-size:10px;border-radius:7px}
+  .tty-head .seg button.active{background:var(--accent);border-color:var(--accent);color:#fff}
 
   /* 折叠卡片 */
   .fold-head{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
@@ -279,7 +292,9 @@
       <h1 id="devName">板子遥控</h1>
       <span class="stat" id="stat">未连接</span>
       <span class="bt-rate" id="btRate" title="手机→板子为上传，板子→手机为下载">
-        <span>BT</span><span class="up" id="btUp">↑ --</span><span class="down" id="btDown">↓ --</span>
+        <span>BT</span><span class="bt-signal" id="btSignal" title="蓝牙信号强度不可用">
+          <i></i><i></i><i></i><i></i><em id="btRssi">--</em>
+        </span><span class="up" id="btUp">↑ --</span><span class="down" id="btDown">↓ --</span>
       </span>
       <button id="btnConn" class="pri" style="flex:0 0 auto;padding:6px 14px;margin-left:8px">连接</button>
       <button id="btnFold" class="ghost" style="flex:0 0 auto;padding:6px 8px" aria-label="展开或收起连接配置">
@@ -338,11 +353,6 @@
     </div>
 
     <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>网络接口</h2>
-      <div id="ifaceList"></div>
-    </div>
-
-    <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="16" cy="12" r="1.5"/><path d="M6 12h5"/></svg>存储与挂载
         <button class="ghost" id="btnStorageReload" style="margin-left:auto;padding:4px 9px">刷新</button>
       </h2>
@@ -396,6 +406,7 @@
           <button data-mode="global">全局</button>
           <button data-mode="direct">直连</button>
         </div>
+        <div class="note warn hide" id="proxyTunHint">TUN 已关闭：模式只影响进入 Mihomo 的流量；板端 ping 不经过 HTTP/SOCKS 代理。请用节点延迟判断代理，系统流量需开启 TUN。</div>
         <div class="kv"><b>当前策略组</b><span id="proxyGroup">--</span></div>
         <div class="kv"><b>当前节点</b><span id="proxyCur">--</span></div>
         <div id="proxyList"></div>
@@ -553,12 +564,15 @@
   <!-- 终端 -->
   <section id="tab-tty" class="hide">
     <div class="card">
-      <h2 style="display:flex;align-items:center;gap:8px">
-        <span>终端</span>
+      <h2 class="tty-head">
+        <button class="ghost" id="btnShFull">全屏</button>
+        <button class="pri" id="btnShStart">启动</button>
+        <button class="ghost" id="btnShClose">结束</button>
+        <button class="ghost" id="btnShFit">适配</button>
         <span class="ttyStat" id="ttyState">未启动</span>
-        <span class="seg" style="margin-left:auto">
+        <span class="seg">
           <button id="segShell" class="active">Shell</button>
-          <button id="segProto">协议台</button>
+          <button id="segProto">协议</button>
         </span>
       </h2>
 
@@ -577,12 +591,6 @@
         </div>
         <div class="dim hide" id="termSelectHint" style="font-size:11px;margin-top:5px">
           选择模式：在终端文字上拖动；完成后点“复制”。再次点“选择”可退出。
-        </div>
-        <div class="row2" id="ttyActions" style="margin-top:8px">
-          <button class="pri" id="btnShStart" style="flex:1">启动 Shell 会话</button>
-          <button class="ghost" id="btnShClose" style="flex:1">结束会话</button>
-          <button class="ghost" id="btnShFit" style="flex:0 0 auto">适配</button>
-          <button class="ghost" id="btnShFull" style="flex:0 0 auto">全屏</button>
         </div>
       </div>
 
@@ -964,6 +972,8 @@ function onState(state, info) {
     storageRows = [];
     proxySubscriptions = { items: [], active_id: "", config_ready: false, config_path: "" };
     proxySubError = "";
+    paintBtSignal(null);
+    paintBtTraffic(null, null);
     stopStream(); clearPending(); stopFollow();
     resetShell();                 // 裸相位不会跨连接存活，必须复位
     setConnFold(false);
@@ -1135,6 +1145,16 @@ function paintBtTraffic(up, down) {
   $("#btDown").textContent = "↓ " + rate(down);
 }
 
+function paintBtSignal(value) {
+  const signal = $("#btSignal");
+  const rssi = Number(value);
+  const valid = Number.isFinite(rssi) && rssi >= -127 && rssi <= 20;
+  const level = !valid ? 0 : rssi >= -45 ? 4 : rssi >= -60 ? 3 : rssi >= -75 ? 2 : 1;
+  signal.className = "bt-signal" + (level ? " s" + level : "");
+  $("#btRssi").textContent = valid ? Math.round(rssi) : "--";
+  signal.title = valid ? "手机与板子蓝牙信号 " + Math.round(rssi) + " dBm" : "蓝牙信号强度不可用";
+}
+
 window.onBtTraffic = function (payload) {
   let data = payload;
   try { if (typeof data === "string") data = JSON.parse(data); } catch (e) { return; }
@@ -1177,33 +1197,7 @@ function renderMetrics(d) {
 
   $("#lgCpu").textContent = Math.round(cpu.pct || 0) + "% · " + (cpu.mhz || 0) + " MHz";
   $("#lgMem").textContent = fmtKB(mem.used_kb || 0) + " / " + fmtKB(mem.total_kb || 0);
-
-  /* 网络接口：动态渲染 d.net 里所有接口（wlan0/end0/wlx... 有多少显示多少） */
-  const IC_WIFI = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 17a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>';
-  const IC_ETH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 15l4-4 3 3 5-6"/></svg>';
-  const nets = d.net || {};
-  const order = ["wlan0", "end0"].concat(Object.keys(nets).filter(k => k !== "wlan0" && k !== "end0"));
-  const ifaceBox = $("#ifaceList");
-  ifaceBox.innerHTML = "";
-  order.forEach(name => {
-    if (!(name in nets)) return;
-    const info = nets[name] || {};
-    const isWifi = info.type === "wifi" || /^wl/i.test(name);
-    const isUsb = info.bus === "usb" || info.external || /^wlx/i.test(name);
-    let on = false, sub = "未连接";
-    if (info.ssid) { on = true; sub = info.ssid + (info.signal_dbm != null ? " · " + info.signal_dbm + " dBm" : ""); }
-    else if (info.ip) { on = true; sub = String(info.ip); }
-    else if (info.state) { on = !/down|no-carrier/i.test(String(info.state)); sub = on ? String(info.state) : "未连接"; }
-    const type = isUsb ? "USB WiFi" : isWifi ? "WiFi" : "有线";
-    const div = document.createElement("div");
-    div.className = "iface";
-    div.innerHTML =
-      '<div class="ic">' + (isWifi ? IC_WIFI : IC_ETH) + '</div>' +
-      '<div class="bd"><div class="nm"><span class="dot' + (on ? " on" : "") + '"></span>' + esc(name) + '</div>' +
-      '<div class="sub">' + esc(sub) + '</div></div>' +
-      '<span class="tag">' + type + '</span>';
-    ifaceBox.appendChild(div);
-  });
+  paintBtSignal(d.bluetooth && d.bluetooth.rssi_dbm);
 
   $("#iLoad").textContent = [cpu.load1, cpu.load5, cpu.load15].map(x => (x || 0).toFixed(2)).join("  ");
   const upSec = uptimeSec();
@@ -1335,7 +1329,8 @@ function renderProxy() {
   $("#proxyStatus").textContent = status;
   $("#proxyTunStatus").textContent = !p.tun_configurable ? "需要新版网关和可写的 Mihomo 配置" :
     (p.tun_enabled ? "已开启 · " + (p.tun_device || "Meta") + " · 板端程序自动经过 Mihomo" :
-      "已关闭 · 不创建虚拟网卡，仅显式代理端口生效");
+      "已关闭 · 仅显式代理端口生效，ping 不走代理");
+  $("#proxyTunHint").classList.toggle("hide", !!p.tun_enabled || p.mode === "direct" || !p.reachable);
   document.querySelectorAll(".mode-bar button").forEach(b => {
     b.classList.toggle("active", b.dataset.mode === p.mode);
     b.disabled = !usable;
@@ -1388,8 +1383,12 @@ $("#proxyTunSwitch").onclick = () => {
       !proxyState.tun_enabled ? "TUN 已开启，板端程序将透明经过代理" : "TUN 已关闭，Meta 虚拟网卡已移除", 90000);
 };
 document.querySelectorAll(".mode-bar button").forEach(b => {
-  b.onclick = () => proxyAction("proxy.mode", { mode: b.dataset.mode },
-    b.dataset.mode === "rule" ? "已启用大陆直连、其他流量走节点" : "代理模式已更新", 120000);
+  b.onclick = () => {
+    const mode = b.dataset.mode;
+    const base = mode === "rule" ? "已启用大陆直连、其他代理流量走节点" : "代理模式已更新";
+    const hint = mode !== "direct" && !proxyState.tun_enabled ? "；TUN 关闭，ping 不会经过代理" : "";
+    proxyAction("proxy.mode", { mode: mode }, base + hint, 120000);
+  };
 });
 $("#btnProxyClear").onclick = () => proxyAction("proxy.mode", { mode: "direct" }, "已切到全部直连，订阅和节点不会清除");
 $("#btnProxyRefresh").onclick = () => loadProxy(true);
@@ -2993,8 +2992,8 @@ function paintShellBtns() {
   const b = $("#btnShStart");
   const active = tab && (tab.state === "running" || tab.state === "starting" || tab.state === "closing");
   b.disabled = !tab || active;
-  b.textContent = tab && tab.state === "running" ? "会话进行中" :
-    tab && tab.state === "starting" ? "正在启动…" : "启动 Shell 会话";
+  b.textContent = tab && tab.state === "running" ? "运行中" :
+    tab && tab.state === "starting" ? "启动中" : "启动";
   $("#btnShClose").disabled = !tab || tab.state !== "running";
 }
 
@@ -3066,13 +3065,15 @@ function setTtyFull(full) {
   ttyFull = full;
   $("#tab-tty").classList.toggle("fs", full);
   document.body.style.overflow = full ? "hidden" : "";
-  $("#btnShFull").textContent = full ? "退出全屏" : "全屏";
+  $("#btnShFull").textContent = full ? "退出" : "全屏";
   setTimeout(fitTerm, 80);
 }
 $("#btnShFull").onclick = () => setTtyFull(!ttyFull);
 
 function switchTty(kind) {
   ttyKind = kind;
+  ["#btnShFull", "#btnShStart", "#btnShClose", "#btnShFit"].forEach(id =>
+    $(id).classList.toggle("hide", kind !== "shell"));
   $("#segShell").classList.toggle("active", kind === "shell");
   $("#segProto").classList.toggle("active", kind === "proto");
   $("#ttyShellWrap").classList.toggle("hide", kind !== "shell");
@@ -3242,7 +3243,7 @@ function startDemo() {
 
     if (m.t === "auth") {
       feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi", "update"],
-        gateway_version: "2.0.0", build: "demo", protocol_min: 1, protocol_max: 2 }));
+        gateway_version: "2.0.1", build: "demo", protocol_min: 1, protocol_max: 2 }));
       return;
     }
     const id = m.id;
@@ -3346,7 +3347,7 @@ function startDemo() {
       protocols: ["stopwait-v1", "window-v2"], window_chunk_bytes: 2560, window_chunks: 4,
       max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true, copy: true });
     if (m.name === "update.status") return ok({ state: "idle", message: "演示升级状态",
-      gateway_version: "2.0.0", build: "demo", release: "2.0.0-demo", rollback_available: true });
+      gateway_version: "2.0.1", build: "demo", release: "2.0.1-demo", rollback_available: true });
     if (m.name === "update.apply" || m.name === "update.rollback") return ok({ accepted: true, reconnect_after_s: 8 });
     if (m.name === "file.list") {
       const rows = m.args.path === "/root" ? [
@@ -3404,6 +3405,7 @@ return ok({});
       cpu: { pct: Math.max(2, Math.round(base)), load1: 0.42, load5: 0.31, load15: 0.28, mhz: 1488, mhz_max: 1800, temp_c: 47 + Math.sin(tick / 9) * 3 },
       mem: { total_kb: 2018400, used_kb: Math.round(memUsed), avail_kb: 1077000, cached_kb: 446000, zram_used_kb: 21000 },
       disk: { root_total_kb: 30400000, root_used_kb: 22000000, root_free_kb: 8400000 },
+      bluetooth: { rssi_dbm: -38 + Math.round(Math.sin(tick / 5) * 5) },
       net: {
         wlan0: { rx_bps: 12000, tx_bps: 3400, ssid: "630", signal_dbm: -26, state: "up" },
         end0: { state: "no-carrier", rx_bps: 0, tx_bps: 0 },
@@ -3420,7 +3422,7 @@ return ok({});
   loadDevices();
 
   setInterval(() => paintBtTraffic(800 + Math.random() * 5000, 4000 + Math.random() * 18000), 1000);
-  feed(JSON.stringify({ t: "hello", ver: 2, gateway_version: "2.0.0", build: "demo", protocol_min: 1, protocol_max: 2,
+  feed(JSON.stringify({ t: "hello", ver: 2, gateway_version: "2.0.1", build: "demo", protocol_min: 1, protocol_max: 2,
     dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required",
     term_protocol: "escaped-v1", term_protocols: ["escaped-v1", "json-mux-v1"] }));
 }

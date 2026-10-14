@@ -95,14 +95,14 @@ SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb"
 SRV_NAME = "OrangePi 3LTS Gateway"
 
 VER = 2
-GATEWAY_VERSION = "2.0.0"
+GATEWAY_VERSION = "2.0.1"
 BUILD_ID = os.environ.get("BTG_BUILD_ID", "20261014")
 PROTOCOL_MIN = 1
 PROTOCOL_MAX = 2
 DEV_ID = "orangepi-3lts"
 DEV_NAME = os.environ.get("BTG_DEV_NAME", "Orange Pi Bluetooth Gateway")
 FEATURES = {
-    "sys": 1, "svc": 1, "net": 2, "pwr": 1, "log": 1,
+    "sys": 2, "svc": 1, "net": 2, "pwr": 1, "log": 1,
     "term": 2, "proxy": 2, "file": 2, "device": 1,
     "storage": 1, "multiwifi": 1, "update": 1,
 }
@@ -739,7 +739,25 @@ def cmd_sys_info(_s, _a):
     }
 
 
-def build_metrics():
+def bluetooth_rssi(mac):
+    """Return the live BR/EDR link RSSI reported by BlueZ management."""
+    if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac):
+        return None
+
+    def _query():
+        rc, out, _err = run(["btmgmt", "conn-info", mac], timeout=3)
+        if rc:
+            return None
+        match = re.search(r"\bRSSI\s+(-?\d+)\b", out)
+        if not match:
+            return None
+        value = int(match.group(1))
+        return value if -127 <= value <= 20 else None
+
+    return memo("bluetooth-rssi:" + mac, 3.0, _query)
+
+
+def build_metrics(peer=None):
     prev, cur = SAMPLER.pair()
     dt = max(cur["ts"] - prev["ts"], 1e-6)
     dt_total = max(cur["total"] - prev["total"], 1)
@@ -796,11 +814,12 @@ def build_metrics():
         "disk": {"root_total_kb": root_total, "root_used_kb": root_used,
                  "root_free_kb": root_free},
         "net": net,
+        "bluetooth": {"rssi_dbm": bluetooth_rssi(peer)},
     }
 
 
-def cmd_sys_metrics(_s, _a):
-    return build_metrics()
+def cmd_sys_metrics(sess, _a):
+    return build_metrics(None if sess.local else sess.peer)
 
 
 def cmd_sys_subscribe(sess, a):
@@ -3405,7 +3424,7 @@ class Session(threading.Thread):
                 iv = self.subs.get("metrics")
                 if iv and time.time() - last_metrics >= iv:
                     last_metrics = time.time()
-                    self.send_ev("metrics", build_metrics())
+                    self.send_ev("metrics", build_metrics(None if self.local else self.peer))
                 with EV_LOCK:
                     alerts = list(EVENTS["alert"]) if "alerts" in self.subs else []
                     svcs = list(EVENTS["svc"])
