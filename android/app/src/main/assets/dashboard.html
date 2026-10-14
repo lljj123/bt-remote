@@ -406,6 +406,25 @@
       </div>
     </div>
 
+    <div class="card fold collapsed" id="foldUpdate">
+      <div class="fold-head">
+        <h2>版本与网关升级</h2>
+        <svg class="fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="fold-body">
+        <div class="kv"><b>App</b><span id="updateAppVersion">--</span></div>
+        <div class="kv"><b>网关</b><span id="updateGatewayVersion">--</span></div>
+        <div class="kv"><b>协议</b><span id="updateProtocolVersion">--</span></div>
+        <div id="updateState" class="note" style="margin:10px 0">连接后读取升级状态。</div>
+        <div class="row2">
+          <button class="pri" id="btnGatewayUpdate" style="flex:1">选择更新包</button>
+          <button class="ghost" id="btnUpdateStatus" style="flex:0 0 auto">刷新</button>
+        </div>
+        <button class="danger" id="btnGatewayRollback" style="width:100%;margin-top:8px" disabled>回滚上一版</button>
+        <div class="dim" style="font-size:11px;margin-top:9px">只接受 .btbundle。更新会校验全部文件；配置发布公钥后还会强制验证 Ed25519 签名。切换失败会自动回滚。</div>
+      </div>
+    </div>
+
     <div class="card fold collapsed" id="foldPower">
       <div class="fold-head">
         <h2>电源与定时唤醒</h2>
@@ -653,6 +672,7 @@ const isNative = typeof window.AndroidBt !== "undefined";
 const native = {
   supported: () => AndroidBt.isSupported(),
   enabled: () => AndroidBt.isEnabled(),
+  appVersion: () => AndroidBt.appVersion(),
   devices: () => { try { return JSON.parse(AndroidBt.devices()); } catch (e) { return []; } },
   connect: (mac) => AndroidBt.connect(mac),
   send: (line) => AndroidBt.send(line),
@@ -687,6 +707,7 @@ let wantConnected = false, retryTimer = null, retryStep = 0;
 let following = false, followUnit = "";
 let devInfo = null, devInfoAt = 0;
 let gatewayCaps = [];
+let gatewayMeta = {};
 const cpuHist = [], memHist = [];
 let lastMetrics = null;
 
@@ -723,6 +744,7 @@ const ERR_HINT = {
   E_EXEC: "命令启动失败",
   E_FILE_ARGS: "文件参数不合法",
   E_FILE_NOTFOUND: "文件或目录不存在",
+  E_UPDATE: "网关更新失败",
   E_FILE_PERM: "没有文件访问权限",
   E_FILE_TYPE: "不支持这种文件类型",
   E_FILE_IO: "文件读写失败",
@@ -793,6 +815,7 @@ function feed(line) {
   try { m = JSON.parse(line); } catch (e) { log("[非 JSON] " + line); return; }
 
   if (m.t === "hello") {
+    gatewayMeta = Object.assign({}, gatewayMeta, m);
     termProtocol = m.term_protocol || "";
     termProtocols = Array.isArray(m.term_protocols) ? m.term_protocols.slice() : [termProtocol];
     devLabel = m.name || m.dev || "板子";
@@ -814,6 +837,7 @@ function feed(line) {
       resetShell();
       authed = true; connected = true; wantConnected = true; retryStep = 0;
       gatewayCaps = Array.isArray(m.caps) ? m.caps.slice() : [];
+      gatewayMeta = Object.assign({}, gatewayMeta, m);
       $("#btnConn").textContent = "断开";
       setConn("on", "已连接");
       setConnFold(true);
@@ -824,6 +848,8 @@ function feed(line) {
       loadProxy(false);
       loadProxySubscriptions();
       loadStorage(true);
+      renderUpdateInfo();
+      loadUpdateStatus();
       if (curTab === "file") loadFiles(fileDir, false);
       if (curTab === "dev") loadUsbDevices(true);
       /* 每次重建连接，终端相位都是干净的（裸相位不会跨连接存活） */
@@ -1232,6 +1258,63 @@ function esc(s) {
 document.querySelectorAll(".fold-head").forEach(h => {
   h.onclick = () => h.closest(".fold").classList.toggle("collapsed");
 });
+
+/* ============ 版本与原子升级 ============ */
+function renderUpdateInfo(status) {
+  let appVersion = "演示";
+  if (isNative) {
+    try { appVersion = native.appVersion(); } catch (_) { appVersion = "--"; }
+  }
+  $("#updateAppVersion").textContent = appVersion;
+  const gatewayVersion = gatewayMeta.gateway_version || (gatewayMeta.ver ? "旧版 v" + gatewayMeta.ver : "--");
+  const build = gatewayMeta.build ? " · " + gatewayMeta.build : "";
+  $("#updateGatewayVersion").textContent = gatewayVersion + build;
+  const pmin = gatewayMeta.protocol_min || gatewayMeta.ver;
+  const pmax = gatewayMeta.protocol_max || gatewayMeta.ver;
+  $("#updateProtocolVersion").textContent = pmin ? (pmin === pmax ? "v" + pmin : "v" + pmin + "–v" + pmax) : "--";
+  if (status) {
+    const labels = { idle: "尚未更新", queued: "已排队", verifying: "正在校验",
+      installing: "正在安装", rolling_back: "正在回滚", success: "成功", error: "失败" };
+    $("#updateState").textContent = (labels[status.state] || status.state || "未知") +
+      (status.message ? " · " + status.message : "") + (status.release ? " · " + status.release : "");
+    $("#btnGatewayRollback").disabled = !status.rollback_available;
+  }
+}
+
+async function loadUpdateStatus() {
+  renderUpdateInfo();
+  if (!authed && isNative) return;
+  if (gatewayCaps.length && !gatewayCaps.includes("update")) {
+    $("#updateState").textContent = "当前网关太旧：先用 install.sh 完成一次基础升级。";
+    $("#btnGatewayUpdate").disabled = true;
+    return;
+  }
+  $("#btnGatewayUpdate").disabled = false;
+  try {
+    const status = await send("update.status", {}, 20000);
+    renderUpdateInfo(status);
+  } catch (e) {
+    $("#updateState").textContent = "读取升级状态失败：" + e.message;
+  }
+}
+
+$("#btnUpdateStatus").onclick = loadUpdateStatus;
+$("#btnGatewayUpdate").onclick = () => {
+  if (!authed) { toast("请先连接并鉴权"); return; }
+  if (!isNative) { toast("演示模式不能选择更新包"); return; }
+  if (fileTransferBusy) { toast("另一个文件任务正在进行"); return; }
+  uploadPurpose = "gateway-update";
+  native.pickUploadFile();
+};
+$("#btnGatewayRollback").onclick = async () => {
+  if (!await confirmWord("回滚网关", "将切换到 previous 指向的上一版，并自动做健康检查。", "ROLLBACK")) return;
+  try {
+    await send("update.rollback", { confirm: "ROLLBACK" }, 30000);
+    $("#updateState").textContent = "已安排回滚，蓝牙会短暂断开并自动重连。";
+    toast("回滚已安排");
+  } catch (e) { toast("回滚失败：" + e.message); }
+};
+renderUpdateInfo();
 
 /* ============ 代理控制（网关转发到 mihomo external-controller） ============ */
 let proxyState = { configured: false, reachable: false, running: false,
@@ -1830,6 +1913,7 @@ let fileDir = "/root", fileRows = [], fileNext = 0, fileEof = true;
 let fileCaps = null, fileTransferBusy = false, fileInputResolve = null;
 let fileEditing = null, pendingDownload = null, fileClipboard = null;
 let fileHistory = [], fileHistoryIndex = -1;
+let uploadPurpose = "file";
 
 function fileJoin(dir, name) { return (dir === "/" ? "/" : dir + "/") + name; }
 function fileParent(path) {
@@ -2117,16 +2201,27 @@ async function uploadBytes(path, bytes, overwrite, sha256, label) {
   let uploadId = null;
   setFileBusy(true, "传输中"); fileProgress(label || "上传", 0, bytes.length);
   try {
-    const begun = await send("file.upload.begin", { path: path, size: bytes.length, overwrite: !!overwrite });
+    const useWindow = Array.isArray((fileCaps || {}).protocols) && fileCaps.protocols.includes("window-v2");
+    const begun = await send("file.upload.begin", { path: path, size: bytes.length,
+      overwrite: !!overwrite, protocol: useWindow ? "window-v2" : "stopwait-v1" });
     uploadId = begun.upload_id;
     const chunkSize = Number(begun.chunk_bytes) || 1536;
+    const windowSize = Math.max(1, Math.min(8, Number(begun.window_chunks) || 1));
     let offset = 0;
     while (offset < bytes.length) {
-      const chunk = bytes.slice(offset, Math.min(offset + chunkSize, bytes.length));
-      const result = await send("file.upload.chunk", {
-        upload_id: uploadId, offset: offset, data_b64: u8ToB64(chunk)
-      }, 30000);
-      offset = Number(result.offset); fileProgress(label || "上传", offset, bytes.length);
+      const requests = []; let next = offset;
+      for (let i = 0; i < windowSize && next < bytes.length; i++) {
+        const start = next;
+        const chunk = bytes.slice(start, Math.min(start + chunkSize, bytes.length));
+        next += chunk.length;
+        requests.push({ end: next, promise: send("file.upload.chunk", {
+          upload_id: uploadId, offset: start, data_b64: u8ToB64(chunk)
+        }, 30000) });
+      }
+      const results = await Promise.all(requests.map(item => item.promise));
+      if (!results.length || Number(results[results.length - 1].offset) !== next)
+        throw new Error("板端上传偏移不一致");
+      offset = next; fileProgress(label || "上传", offset, bytes.length);
     }
     const args = { upload_id: uploadId };
     if (sha256) args.sha256 = sha256;
@@ -2144,11 +2239,77 @@ $("#btnFileUpload").onclick = () => {
   if (!authed && isNative) { toast("请先连接并鉴权"); return; }
   if (!isNative) { toast("演示模式不能读取手机文件"); return; }
   if (fileTransferBusy) return;
+  uploadPurpose = "file";
   native.pickUploadFile();
 };
+
+async function uploadSelectedPhoneFile(info, path, overwrite, label) {
+  if (!fileCaps) fileCaps = await send("file.caps", {}, 20000);
+  const maximum = Number((fileCaps || {}).max_transfer_bytes) || 1073741824;
+  const size = Number(info.size);
+  if (!Number.isFinite(size) || size < 0 || size > maximum)
+    throw new Error("文件大小无效或超过 " + fmtBytes(maximum));
+  let uploadId = null, offset = 0;
+  const useWindow = Array.isArray(fileCaps.protocols) && fileCaps.protocols.includes("window-v2");
+  setFileBusy(true, "上传中"); fileProgress(label, 0, size);
+  try {
+    const begun = await send("file.upload.begin", { path: path, size: size,
+      overwrite: !!overwrite, protocol: useWindow ? "window-v2" : "stopwait-v1" });
+    uploadId = begun.upload_id;
+    const chunkSize = Number(begun.chunk_bytes) || 1536;
+    const windowSize = Math.max(1, Math.min(8, Number(begun.window_chunks) || 1));
+    while (offset < size) {
+      const requests = []; let next = offset;
+      for (let i = 0; i < windowSize && next < size; i++) {
+        const local = native.readUploadChunk(next, chunkSize);
+        if (!local.ok || !local.data_b64) throw new Error(local.error || "读取手机文件失败");
+        const start = next;
+        next = Number(local.next_offset);
+        if (next <= start) throw new Error("手机文件分块没有前进");
+        requests.push(send("file.upload.chunk", {
+          upload_id: uploadId, offset: start, data_b64: local.data_b64
+        }, 30000));
+      }
+      const accepted = await Promise.all(requests);
+      if (!accepted.length || Number(accepted[accepted.length - 1].offset) !== next)
+        throw new Error("板端上传偏移不一致");
+      offset = next; fileProgress(label, offset, size);
+    }
+    const localDone = native.finishUploadFile();
+    if (!localDone.ok) throw new Error(localDone.error || "手机文件校验失败");
+    const result = await send("file.upload.commit", {
+      upload_id: uploadId, sha256: localDone.sha256
+    }, 60000);
+    uploadId = null;
+    return result;
+  } catch (e) {
+    if (uploadId) try { await send("file.upload.abort", { upload_id: uploadId }); } catch (_) { }
+    native.cancelUploadFile();
+    throw e;
+  } finally {
+    setFileBusy(false, "就绪"); setTimeout(() => fileProgress("", 0, 0), 700);
+  }
+}
+
 window.onLocalUploadPicked = async function (jsonStr) {
   let info; try { info = JSON.parse(jsonStr); } catch (_) { return; }
+  const purpose = uploadPurpose;
+  uploadPurpose = "file";
   if (!info.ok) { if (!info.cancelled) toast(info.error || "选择文件失败"); return; }
+  if (purpose === "gateway-update") {
+    if (!String(info.name || "").toLowerCase().endsWith(".btbundle")) {
+      native.cancelUploadFile(); toast("请选择 .btbundle 网关更新包"); return;
+    }
+    const path = "/var/lib/bt-gateway/incoming/app-" + Date.now() + ".btbundle";
+    try {
+      await uploadSelectedPhoneFile(info, path, false, "上传网关更新包");
+      $("#updateState").textContent = "更新包已校验上传，正在安排原子切换…";
+      await send("update.apply", { path: path, confirm: "UPDATE" }, 30000);
+      $("#updateState").textContent = "升级已安排；连接将短暂断开，健康检查失败会自动回滚。";
+      toast("网关升级已安排");
+    } catch (e) { toast("更新失败：" + e.message); }
+    return;
+  }
   const name = await askFileName("上传到板端", "板端文件名", info.name || "upload.bin");
   if (!name) { native.cancelUploadFile(); return; }
   const path = fileJoin(fileDir, name);
@@ -2156,34 +2317,11 @@ window.onLocalUploadPicked = async function (jsonStr) {
   if (overwrite && !await confirmWord("覆盖文件", path + " 已存在，将用上传内容替换。", "OVERWRITE")) {
     native.cancelUploadFile(); return;
   }
-  const maximum = Number((fileCaps || {}).max_transfer_bytes) || 1073741824;
-  if (Number(info.size) > maximum) { native.cancelUploadFile(); toast("文件超过 " + fmtBytes(maximum)); return; }
-  let uploadId = null, offset = 0;
-  setFileBusy(true, "上传中"); fileProgress("上传 " + name, 0, Number(info.size));
   try {
-    const begun = await send("file.upload.begin", {
-      path: path, size: Number(info.size), overwrite: overwrite
-    });
-    uploadId = begun.upload_id;
-    while (offset < Number(info.size)) {
-      const local = native.readUploadChunk(offset, Number(begun.chunk_bytes) || 1536);
-      if (!local.ok || !local.data_b64) throw new Error(local.error || "读取手机文件失败");
-      const accepted = await send("file.upload.chunk", {
-        upload_id: uploadId, offset: offset, data_b64: local.data_b64
-      }, 30000);
-      offset = Number(accepted.offset); fileProgress("上传 " + name, offset, Number(info.size));
-    }
-    const localDone = native.finishUploadFile();
-    if (!localDone.ok) throw new Error(localDone.error || "手机文件校验失败");
-    await send("file.upload.commit", { upload_id: uploadId, sha256: localDone.sha256 }, 60000);
-    uploadId = null; toast("上传完成并通过 SHA256 校验");
+    await uploadSelectedPhoneFile(info, path, overwrite, "上传 " + name);
+    toast("上传完成并通过 SHA256 校验");
     loadFiles(fileDir, false);
-  } catch (e) {
-    if (uploadId) try { await send("file.upload.abort", { upload_id: uploadId }); } catch (_) { }
-    native.cancelUploadFile(); toast("上传失败：" + e.message);
-  } finally {
-    setFileBusy(false, "就绪"); setTimeout(() => fileProgress("", 0, 0), 700);
-  }
+  } catch (e) { toast("上传失败：" + e.message); }
 };
 
 function downloadFile(entry) {
@@ -2198,27 +2336,56 @@ window.onLocalDownloadPicked = async function (jsonStr) {
   let picked; try { picked = JSON.parse(jsonStr); } catch (_) { return; }
   const transfer = pendingDownload; pendingDownload = null;
   if (!picked.ok || !transfer) { if (!picked.cancelled && picked.error) toast(picked.error); return; }
-  let offset = 0;
+  let offset = 0, downloadId = null;
   setFileBusy(true, "下载中"); fileProgress("下载 " + transfer.name, 0, transfer.size);
   try {
     const remoteHash = await send("file.hash", { path: transfer.path }, 180000);
     if (!remoteHash.stable_size || Number(remoteHash.size) !== transfer.size)
       throw new Error("文件在下载前发生变化，请刷新列表后重试");
+    const useWindow = Array.isArray((fileCaps || {}).protocols) && fileCaps.protocols.includes("window-v2");
+    let chunkSize = 1536, windowSize = 1;
+    if (useWindow) {
+      const begun = await send("file.download.begin", { path: transfer.path }, 30000);
+      downloadId = begun.download_id;
+      if (Number(begun.size) !== transfer.size) throw new Error("文件在下载前发生变化");
+      chunkSize = Number(begun.chunk_bytes) || 2560;
+      windowSize = Math.max(1, Math.min(8, Number(begun.window_chunks) || 1));
+    }
     while (offset < transfer.size) {
-      const part = await send("file.read", {
-        path: transfer.path, offset: offset, length: 1536
-      }, 30000);
-      const local = native.writeDownloadChunk(offset, part.data_b64 || "");
-      if (!local.ok) throw new Error(local.error || "写入手机文件失败");
-      if (Number(part.next_offset) <= offset && !part.eof) throw new Error("板端文件分块没有前进");
-      offset = Number(part.next_offset); fileProgress("下载 " + transfer.name, offset, transfer.size);
-      if (part.eof) break;
+      const requests = []; let next = offset;
+      for (let i = 0; i < windowSize && next < transfer.size; i++) {
+        const start = next;
+        const length = Math.min(chunkSize, transfer.size - start);
+        const promise = useWindow ? send("file.download.chunk", {
+          download_id: downloadId, offset: start, length: length
+        }, 30000) : send("file.read", {
+          path: transfer.path, offset: start, length: length
+        }, 30000);
+        requests.push({ start: start, promise: promise });
+        next += length;
+      }
+      const parts = await Promise.all(requests.map(item => item.promise));
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i], start = requests[i].start;
+        if (Number(part.offset) !== start) throw new Error("板端下载偏移不一致");
+        const local = native.writeDownloadChunk(start, part.data_b64 || "");
+        if (!local.ok) throw new Error(local.error || "写入手机文件失败");
+        const advanced = Number(part.next_offset);
+        if (advanced <= start && !part.eof) throw new Error("板端文件分块没有前进");
+        offset = advanced;
+      }
+      fileProgress("下载 " + transfer.name, offset, transfer.size);
     }
     if (offset !== transfer.size) throw new Error("下载大小不一致");
+    if (downloadId) {
+      await send("file.download.end", { download_id: downloadId }, 20000);
+      downloadId = null;
+    }
     const done = native.finishDownloadFile(true, remoteHash.sha256);
     if (!done.ok) throw new Error(done.error || "下载校验失败");
     toast("已保存到手机并通过 SHA256 校验");
   } catch (e) {
+    if (downloadId) try { await send("file.download.end", { download_id: downloadId }); } catch (_) { }
     try { native.finishDownloadFile(false, ""); } catch (_) { }
     toast("下载失败：" + e.message);
   } finally {
@@ -3074,7 +3241,8 @@ function startDemo() {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
 
     if (m.t === "auth") {
-      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi"] }));
+      feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi", "update"],
+        gateway_version: "2.0.0", build: "demo", protocol_min: 1, protocol_max: 2 }));
       return;
     }
     const id = m.id;
@@ -3175,7 +3343,11 @@ function startDemo() {
     }
     if (m.name === "proxy.switch") return ok({ accepted: true, name: m.args.name });
     if (m.name === "file.caps") return ok({ root: "/", chunk_bytes: 1536,
+      protocols: ["stopwait-v1", "window-v2"], window_chunk_bytes: 2560, window_chunks: 4,
       max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true, copy: true });
+    if (m.name === "update.status") return ok({ state: "idle", message: "演示升级状态",
+      gateway_version: "2.0.0", build: "demo", release: "2.0.0-demo", rollback_available: true });
+    if (m.name === "update.apply" || m.name === "update.rollback") return ok({ accepted: true, reconnect_after_s: 8 });
     if (m.name === "file.list") {
       const rows = m.args.path === "/root" ? [
         { name: "projects", type: "dir", size: 4096, mtime: 1760270400, mode: "0755" },
@@ -3248,7 +3420,8 @@ return ok({});
   loadDevices();
 
   setInterval(() => paintBtTraffic(800 + Math.random() * 5000, 4000 + Math.random() * 18000), 1000);
-  feed(JSON.stringify({ t: "hello", ver: 1, dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required",
+  feed(JSON.stringify({ t: "hello", ver: 2, gateway_version: "2.0.0", build: "demo", protocol_min: 1, protocol_max: 2,
+    dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required",
     term_protocol: "escaped-v1", term_protocols: ["escaped-v1", "json-mux-v1"] }));
 }
 

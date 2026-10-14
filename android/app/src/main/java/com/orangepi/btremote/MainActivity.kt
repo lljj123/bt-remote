@@ -322,6 +322,10 @@ class MainActivity : AppCompatActivity() {
         fun isRaw(): Boolean = spp.isRaw()
 
         @JavascriptInterface
+        @Suppress("DEPRECATION")
+        fun appVersion(): String = packageManager.getPackageInfo(packageName, 0).versionName ?: "--"
+
+        @JavascriptInterface
         fun connect(mac: String) {
             synchronized(spp) {
                 deliveryEpoch++
@@ -479,7 +483,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQ_BT = 1001
-        private const val FILE_BRIDGE_CHUNK = 1536
+        private const val FILE_BRIDGE_CHUNK = 2560
         private const val MAX_CLIPBOARD_CHARS = 256 * 1024
     }
 }

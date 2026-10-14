@@ -93,10 +93,17 @@ class SppClient(ctx: Context) {
                             c.writer = Thread({
                                 try {
                                     while (owns(c)) {
-                                        val data = c.queue.take()
-                                        output.write(data)
+                                        val first = c.queue.take()
+                                        output.write(first)
+                                        var written = first.size.toLong()
+                                        val batch = ArrayList<ByteArray>(15)
+                                        c.queue.drainTo(batch, 15)
+                                        batch.forEach { data ->
+                                            output.write(data)
+                                            written += data.size
+                                        }
                                         output.flush()
-                                        c.txBytes += data.size
+                                        c.txBytes += written
                                     }
                                 } catch (e: Exception) { fail(c, e) }
                             }, "spp-writer").also { it.start() }

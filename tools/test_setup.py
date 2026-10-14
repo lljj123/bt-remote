@@ -31,24 +31,31 @@ class InstallTests(unittest.TestCase):
             token = root / "etc/bt-gateway/token"
             self.assertFalse(token.exists())
             token.write_text("private-test-fixture\n")
-            binary = root / "usr/local/bin/bt-gateway"
+            release = root / "opt/bt-remote/releases" / installer.release_id()
+            binary = release / "bin/bt-gateway"
             original = binary.stat().st_mtime_ns
             installer.install(root, live=False)
             self.assertEqual(binary.stat().st_mtime_ns, original)
             self.assertEqual(config.read_text(), "BTG_WLAN=custom0\n")
             self.assertEqual(token.read_text(), "private-test-fixture\n")
-            for _, (name, _) in installer.FILES.items():
+            for _, (name, _) in installer.SYSTEM_FILES.items():
                 self.assertTrue((root / name).is_file(), name)
+            for _, (name, _) in installer.RELEASE_FILES.items():
+                self.assertTrue((release / name).is_file(), name)
+            self.assertEqual(os.readlink(root / "opt/bt-remote/current"),
+                             "/opt/bt-remote/releases/" + installer.release_id())
+            self.assertEqual(os.readlink(root / "usr/local/bin/bt-gateway"),
+                             "/opt/bt-remote/current/bin/bt-gateway")
             self.assertFalse((root / "etc/bt-gateway/install-backups").exists())
 
     def test_upgrade_backs_up_changed_file(self):
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
             root = Path(d)
             installer.install(root, live=False)
-            binary = root / "usr/local/bin/bt-gateway"
-            binary.write_text("old-version")
+            unit = root / "etc/systemd/system/bt-gateway.service"
+            unit.write_text("old-version")
             installer.install(root, live=False)
-            backups = list((root / "etc/bt-gateway/install-backups").rglob("bt-gateway"))
+            backups = list((root / "etc/bt-gateway/install-backups").rglob("bt-gateway.service"))
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(), "old-version")
 

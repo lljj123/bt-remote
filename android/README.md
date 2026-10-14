@@ -28,7 +28,9 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 概览页不显示额外的“自定义系统信息”卡片；通用 `term.exec` 仍可从协议台调用。“服务”页只保留代理与电源/RTC：代理卡片调用 `proxy.status/switch/mode/onoff/tun` 和 `proxy.sub.*`，可保存并应用 Mihomo/Clash proxy-provider 订阅，选择框只显示机场名称；关闭代理只切换直连模式，不清除订阅或节点。TUN 透明代理有独立开关，开启时创建 Mihomo 虚拟网卡并让板端程序自动经过代理，关闭后移除虚拟网卡。需要板端配置 mihomo external-controller 与配置文件路径。
 
-“文件”页替代旧的“日志”页签，提供返回历史、上一级和页内文件剪贴板，可复制文件、符号链接或目录后进入目标目录粘贴。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。上传及下载都校验 SHA256；小型 UTF-8 文本可以直接预览和原子保存。`storage.*` 每块板载闪存或 USB 存储只返回一个主文件系统，隐藏 eMMC boot/RPMB 与 zram/ram 实现设备；App 挂载后会成为文件页快捷入口。
+“文件”页替代旧的“日志”页签，提供返回历史、上一级和页内文件剪贴板，可复制文件、符号链接或目录后进入目标目录粘贴。板端文件通过 `file.*` 分块协议管理，手机侧通过 Android Storage Access Framework 选择上传源和下载位置，因此不需要存储权限。新版优先使用 2560 字节、4 请求窗口的 `window-v2`，旧网关自动退回 1536 字节停等模式；上传及下载都校验 SHA256。小型 UTF-8 文本可以直接预览和原子保存。`storage.*` 每块板载闪存或 USB 存储只返回一个主文件系统，隐藏 eMMC boot/RPMB 与 zram/ram 实现设备；App 挂载后会成为文件页快捷入口。
+
+“服务”页的“版本与网关升级”显示 App、网关、构建号和协议兼容范围。选择 `.btbundle` 后，App 通过已鉴权的蓝牙连接上传，板端校验清单（配置公钥后还会验 Ed25519 签名）、原子切换版本并健康检查；失败自动回滚，也可手动切回 `previous`。
 
 “网络”页通过 `net.ifaces` 枚举全部网卡，可选择板载或 USB 无线接口，再将 `iface` 传给 `net.wifi.status/scan/saved/connect/forget`。“外设”页通过分页的 `device.usb.list` 显示 USB 设备、驱动及其网卡/磁盘/串口节点，不需要 Android USB 权限，因为枚举发生在板端。
 

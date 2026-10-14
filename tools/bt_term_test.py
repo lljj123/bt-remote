@@ -69,17 +69,27 @@ def main():
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect("/run/bt-gateway.sock")
         peer = Peer(sock)
-        assert peer.line().get("term_protocol") == "escaped-v1"
+        hello = peer.line()
+        assert hello.get("term_protocol") == "escaped-v1"
+        assert hello.get("gateway_version") == "2.0.0", hello
+        assert hello.get("protocol_min") == 1 and hello.get("protocol_max") == 2, hello
         peer.send({"t": "auth", "token": token})
         auth = peer.line()
         assert auth.get("ok") is True
         assert "file" in auth.get("caps", []), auth
         assert "device" in auth.get("caps", []), auth
         assert "multiwifi" in auth.get("caps", []), auth
+        assert "update" in auth.get("caps", []), auth
         peer.send({"t": "cmd", "id": 99, "name": "file.caps", "args": {}})
         file_caps = peer.response(99)["data"]
         assert file_caps["chunk_bytes"] == 1536, file_caps
-        print("PASS: file manager capability")
+        assert "window-v2" in file_caps.get("protocols", []), file_caps
+        assert file_caps.get("window_chunks") == 4, file_caps
+        print("PASS: file manager window-v2 capability")
+        peer.send({"t": "cmd", "id": 97, "name": "update.status", "args": {}})
+        update = peer.response(97)["data"]
+        assert update.get("gateway_version") == "2.0.0", update
+        print("PASS: versioned update capability")
         peer.send({"t": "cmd", "id": 98, "name": "device.usb.list",
                    "args": {"offset": 0, "limit": 1}})
         usb = peer.response(98)["data"]

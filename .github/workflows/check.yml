@@ -21,11 +21,17 @@ jobs:
           for script in install.sh board/bin/*.sh board/etc/*.sh; do bash -n "$script"; done
       - name: Publication hygiene
         run: python3 tools/check_source.py
+      - name: Unit tests
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Dashboard JavaScript syntax
+        run: awk '$0=="<script>" {p=1; next} p && /<\/script>/ {exit} p' android/app/src/main/assets/dashboard.html | node --check
       - name: Stage without changing host services
         run: python3 tools/install_gateway.py --destdir .stage
       - name: Verify staged layout
         run: |
-          test -x .stage/usr/local/bin/bt-gateway
-          test -x .stage/usr/local/bin/bt-remote
+          test "$(readlink .stage/usr/local/bin/bt-gateway)" = /opt/bt-remote/current/bin/bt-gateway
+          test "$(readlink .stage/usr/local/bin/bt-remote)" = /opt/bt-remote/current/bin/bt-remote
+          release=$(basename "$(readlink .stage/opt/bt-remote/current)")
+          test -x ".stage/opt/bt-remote/releases/$release/bin/bt-gateway"
           test -f .stage/etc/systemd/system/bt-connectable.timer
           test ! -e .stage/etc/bt-gateway/token

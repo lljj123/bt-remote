@@ -636,6 +636,39 @@ class GatewayCommandTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), payload)
             self.assertFalse(session.file_uploads)
 
+    def test_file_window_v2_upload_and_download_sessions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = types.SimpleNamespace(file_uploads={}, file_downloads={})
+            target = Path(directory) / "window.bin"
+            payload = os.urandom(GATEWAY.FILE_CHUNK_V2 * 2 + 37)
+            begun = GATEWAY.cmd_file_upload_begin(session, {
+                "path": str(target), "size": len(payload), "overwrite": False,
+                "protocol": "window-v2"})
+            self.assertEqual(begun["chunk_bytes"], GATEWAY.FILE_CHUNK_V2)
+            self.assertEqual(begun["window_chunks"], GATEWAY.FILE_WINDOW_V2)
+            offset = 0
+            for start in range(0, len(payload), GATEWAY.FILE_CHUNK_V2):
+                chunk = payload[start:start + GATEWAY.FILE_CHUNK_V2]
+                result = GATEWAY.cmd_file_upload_chunk(session, {
+                    "upload_id": begun["upload_id"], "offset": offset,
+                    "data_b64": base64.b64encode(chunk).decode()})
+                offset = result["offset"]
+            GATEWAY.cmd_file_upload_commit(session, {
+                "upload_id": begun["upload_id"],
+                "sha256": hashlib.sha256(payload).hexdigest()})
+
+            download = GATEWAY.cmd_file_download_begin(session, {"path": str(target)})
+            parts = []
+            for start in range(0, len(payload), download["chunk_bytes"]):
+                result = GATEWAY.cmd_file_download_chunk(session, {
+                    "download_id": download["download_id"], "offset": start,
+                    "length": min(download["chunk_bytes"], len(payload) - start)})
+                parts.append(base64.b64decode(result["data_b64"]))
+            self.assertEqual(b"".join(parts), payload)
+            self.assertTrue(GATEWAY.cmd_file_download_end(session, {
+                "download_id": download["download_id"]})["closed"])
+            self.assertFalse(session.file_downloads)
+
             bad = GATEWAY.cmd_file_upload_begin(session, {
                 "path": str(target), "size": 3, "overwrite": True})
             GATEWAY.cmd_file_upload_chunk(session, {

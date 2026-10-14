@@ -71,6 +71,8 @@ TERM_EXEC_COMMAND_MAX = 2048
 TERM_EXEC_OUTPUT_MAX = 2048
 TERM_EXEC_TIMEOUT_MAX = 120.0
 FILE_CHUNK = 1536
+FILE_CHUNK_V2 = 2560
+FILE_WINDOW_V2 = 4
 FILE_PATH_MAX = 1024
 FILE_TRANSFER_MAX = 1024 * 1024 * 1024
 FILE_TEXT_PREVIEW_MAX = 128 * 1024
@@ -92,10 +94,23 @@ AGENT_PATH = "/org/btgateway/agent"
 SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb"
 SRV_NAME = "OrangePi 3LTS Gateway"
 
-VER = 1
+VER = 2
+GATEWAY_VERSION = "2.0.0"
+BUILD_ID = os.environ.get("BTG_BUILD_ID", "20261014")
+PROTOCOL_MIN = 1
+PROTOCOL_MAX = 2
 DEV_ID = "orangepi-3lts"
 DEV_NAME = os.environ.get("BTG_DEV_NAME", "Orange Pi Bluetooth Gateway")
-CAPS = ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi"]
+FEATURES = {
+    "sys": 1, "svc": 1, "net": 2, "pwr": 1, "log": 1,
+    "term": 2, "proxy": 2, "file": 2, "device": 1,
+    "storage": 1, "multiwifi": 1, "update": 1,
+}
+CAPS = list(FEATURES)
+UPDATE_ROOT = "/var/lib/bt-gateway"
+UPDATE_INCOMING = UPDATE_ROOT + "/incoming"
+UPDATE_STATUS = UPDATE_ROOT + "/update-status.json"
+UPDATE_HELPER = "/usr/local/bin/bt-remote-apply-update"
 
 MIHOMO_API = os.environ.get("BTG_MIHOMO_API", "").rstrip("/")
 MIHOMO_SECRET_FILE = os.environ.get("BTG_MIHOMO_SECRET_FILE", "")
@@ -213,6 +228,12 @@ def save_state(st):
 
 def jdump(o):
     return json.dumps(o, ensure_ascii=False, separators=(",", ":"))
+
+
+def gateway_meta():
+    return {"ver": VER, "gateway_version": GATEWAY_VERSION, "build": BUILD_ID,
+            "protocol_min": PROTOCOL_MIN, "protocol_max": PROTOCOL_MAX,
+            "features": FEATURES}
 
 
 def _shrink(obj):
@@ -1862,6 +1883,9 @@ def _file_row(name, path, info):
 
 def cmd_file_caps(_s, _a):
     return {"root": "/", "chunk_bytes": FILE_CHUNK,
+            "protocols": ["stopwait-v1", "window-v2"],
+            "window_chunk_bytes": FILE_CHUNK_V2,
+            "window_chunks": FILE_WINDOW_V2,
             "max_transfer_bytes": FILE_TRANSFER_MAX,
             "text_preview_bytes": FILE_TEXT_PREVIEW_MAX,
             "atomic_upload": True, "copy": True,
@@ -1948,6 +1972,73 @@ def cmd_file_read(_s, a):
     return {"path": path, "offset": offset, "next_offset": next_offset,
             "size": info.st_size, "data_b64": base64.b64encode(data).decode("ascii"),
             "eof": next_offset >= info.st_size or len(data) < length}
+
+
+def _file_downloads(sess):
+    if not hasattr(sess, "file_downloads"):
+        sess.file_downloads = {}
+    return sess.file_downloads
+
+
+def _file_download_drop(sess, download_id):
+    record = _file_downloads(sess).pop(download_id, None)
+    if not record:
+        return False
+    try:
+        record["handle"].close()
+    except OSError:
+        pass
+    return True
+
+
+def cmd_file_download_begin(sess, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    path = _file_path(a.get("path"))
+    downloads = _file_downloads(sess)
+    if len(downloads) >= 2:
+        raise CmdError("E_BUSY", "too many active downloads")
+    handle, info = _open_regular(path)
+    download_id = uuid.uuid4().hex
+    downloads[download_id] = {"handle": handle, "path": path, "size": info.st_size,
+                              "mtime_ns": getattr(info, "st_mtime_ns", int(info.st_mtime * 1e9))}
+    return {"download_id": download_id, "size": info.st_size,
+            "chunk_bytes": FILE_CHUNK_V2, "window_chunks": FILE_WINDOW_V2,
+            "protocol": "window-v2"}
+
+
+def cmd_file_download_chunk(sess, a):
+    if not isinstance(a, dict):
+        raise CmdError("E_FILE_ARGS", "args must be object")
+    download_id = a.get("download_id")
+    record = _file_downloads(sess).get(download_id) if isinstance(download_id, str) else None
+    if not record:
+        raise CmdError("E_FILE_STATE", "download session not found")
+    offset, length = a.get("offset"), a.get("length", FILE_CHUNK_V2)
+    if type(offset) is not int or offset < 0 or offset > record["size"]:
+        raise CmdError("E_FILE_ARGS", "offset is outside the file")
+    if type(length) is not int or not (1 <= length <= FILE_CHUNK_V2):
+        raise CmdError("E_FILE_ARGS", "length must be 1..%d" % FILE_CHUNK_V2)
+    try:
+        if hasattr(os, "pread"):
+            data = os.pread(record["handle"].fileno(), length, offset)
+        else:
+            record["handle"].seek(offset)
+            data = record["handle"].read(length)
+    except OSError as error:
+        _file_download_drop(sess, download_id)
+        _file_fail(error, "download read")
+    next_offset = offset + len(data)
+    return {"download_id": download_id, "offset": offset, "next_offset": next_offset,
+            "data_b64": base64.b64encode(data).decode("ascii"),
+            "eof": next_offset >= record["size"] or len(data) < length}
+
+
+def cmd_file_download_end(sess, a):
+    if not isinstance(a, dict) or not isinstance(a.get("download_id"), str):
+        raise CmdError("E_FILE_ARGS", "download_id required")
+    return {"download_id": a["download_id"],
+            "closed": _file_download_drop(sess, a["download_id"])}
 
 
 def cmd_file_hash(_s, a):
@@ -2113,10 +2204,13 @@ def cmd_file_upload_begin(sess, a):
         raise CmdError("E_FILE_ARGS", "args must be object")
     path = _file_path(a.get("path"))
     size, overwrite = a.get("size"), a.get("overwrite", False)
+    protocol = a.get("protocol", "stopwait-v1")
     if type(size) is not int or not (0 <= size <= FILE_TRANSFER_MAX):
         raise CmdError("E_FILE_ARGS", "size must be 0..%d" % FILE_TRANSFER_MAX)
     if type(overwrite) is not bool:
         raise CmdError("E_FILE_ARGS", "overwrite must be boolean")
+    if protocol not in ("stopwait-v1", "window-v2"):
+        raise CmdError("E_FILE_ARGS", "unsupported upload protocol")
     if path == "/":
         raise CmdError("E_FILE_ARGS", "cannot upload to filesystem root")
     uploads = _file_uploads(sess)
@@ -2143,11 +2237,15 @@ def cmd_file_upload_begin(sess, a):
         fd = os.open(temporary, flags, 0o600)
     except OSError as error:
         _file_fail(error, "upload")
+    chunk_bytes = FILE_CHUNK_V2 if protocol == "window-v2" else FILE_CHUNK
+    window_chunks = FILE_WINDOW_V2 if protocol == "window-v2" else 1
     uploads[upload_id] = {"fd": fd, "temporary": temporary, "target": path,
                           "size": size, "received": 0, "sha256": hashlib.sha256(),
-                          "overwrite": overwrite, "mode": mode}
+                          "overwrite": overwrite, "mode": mode,
+                          "chunk_bytes": chunk_bytes, "protocol": protocol}
     return {"upload_id": upload_id, "path": path, "size": size,
-            "chunk_bytes": FILE_CHUNK, "offset": 0}
+            "chunk_bytes": chunk_bytes, "window_chunks": window_chunks,
+            "protocol": protocol, "offset": 0}
 
 
 def cmd_file_upload_chunk(sess, a):
@@ -2159,14 +2257,15 @@ def cmd_file_upload_chunk(sess, a):
         raise CmdError("E_FILE_STATE", "upload session not found")
     if type(offset) is not int or offset != record["received"]:
         raise CmdError("E_FILE_OFFSET", "expected offset %d" % record["received"])
-    if not isinstance(encoded, str) or len(encoded) > 4 * ((FILE_CHUNK + 2) // 3):
+    chunk_bytes = record["chunk_bytes"]
+    if not isinstance(encoded, str) or len(encoded) > 4 * ((chunk_bytes + 2) // 3):
         raise CmdError("E_FILE_ARGS", "invalid upload chunk")
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error):
         raise CmdError("E_FILE_ARGS", "invalid base64")
-    if not data or len(data) > FILE_CHUNK:
-        raise CmdError("E_FILE_ARGS", "upload chunk must be 1..%d bytes" % FILE_CHUNK)
+    if not data or len(data) > chunk_bytes:
+        raise CmdError("E_FILE_ARGS", "upload chunk must be 1..%d bytes" % chunk_bytes)
     if offset + len(data) > record["size"]:
         raise CmdError("E_FILE_SIZE", "upload exceeds declared size")
     try:
@@ -2230,6 +2329,86 @@ def cmd_file_upload_abort(sess, a):
         raise CmdError("E_FILE_ARGS", "upload_id required")
     return {"upload_id": a["upload_id"],
             "aborted": _file_upload_drop(sess, a["upload_id"])}
+
+
+# ------------------------------------------------------------------ update.*
+def _update_status_read():
+    try:
+        with open(UPDATE_STATUS) as source:
+            value = json.load(source)
+        if isinstance(value, dict):
+            return value
+    except (OSError, ValueError):
+        pass
+    return {"state": "idle", "message": "尚未执行 App 内更新"}
+
+
+def _update_status_write(value):
+    os.makedirs(UPDATE_ROOT, mode=0o700, exist_ok=True)
+    temporary = UPDATE_STATUS + ".tmp"
+    with open(temporary, "w") as target:
+        json.dump(value, target, ensure_ascii=False, separators=(",", ":"))
+        target.flush()
+        os.fsync(target.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, UPDATE_STATUS)
+
+
+def cmd_update_status(_s, _a):
+    result = _update_status_read()
+    result.update({"gateway_version": GATEWAY_VERSION, "build": BUILD_ID,
+                   "protocol_min": PROTOCOL_MIN, "protocol_max": PROTOCOL_MAX})
+    current = "/opt/bt-remote/current"
+    previous = "/opt/bt-remote/previous"
+    result["release"] = os.path.basename(os.path.realpath(current)) if os.path.exists(current) else "legacy"
+    result["rollback_available"] = os.path.islink(previous) and os.path.exists(previous)
+    return result
+
+
+def _schedule_update(arguments, status):
+    if not os.path.isfile(UPDATE_HELPER) or os.path.islink(UPDATE_HELPER) and not os.path.exists(UPDATE_HELPER):
+        raise CmdError("E_UPDATE", "update helper is not installed")
+    current = _update_status_read()
+    if current.get("state") in ("queued", "verifying", "installing", "rolling_back"):
+        raise CmdError("E_BUSY", "another gateway update is already running")
+    unit = "bt-remote-update-%d-%s" % (int(time.time()), uuid.uuid4().hex[:6])
+    command = ["systemd-run", "--quiet", "--collect", "--unit=" + unit,
+               "--on-active=2s", UPDATE_HELPER] + arguments
+    rc, _out, err = run(command, timeout=15)
+    if rc != 0:
+        raise CmdError("E_UPDATE", "cannot schedule update: " + err.strip()[:160])
+    queued = dict(status, state="queued", unit=unit, queued_at=int(time.time()))
+    _update_status_write(queued)
+    return {"accepted": True, "unit": unit, "reconnect_after_s": 8}
+
+
+def cmd_update_apply(_s, a):
+    if not isinstance(a, dict) or a.get("confirm") != "UPDATE":
+        raise CmdError("E_CONFIRM", 'confirm must be "UPDATE"')
+    path = a.get("path")
+    if not isinstance(path, str):
+        raise CmdError("E_UPDATE", "bundle path required")
+    real = os.path.realpath(path)
+    incoming = os.path.realpath(UPDATE_INCOMING)
+    if not real.startswith(incoming + os.sep) or not real.endswith(".btbundle"):
+        raise CmdError("E_UPDATE", "bundle must be an uploaded .btbundle file")
+    try:
+        info = os.stat(real, follow_symlinks=False)
+    except OSError as error:
+        raise CmdError("E_UPDATE", "bundle unavailable: " + str(error)[:120])
+    if not stat.S_ISREG(info.st_mode) or not (1 <= info.st_size <= 256 * 1024 * 1024):
+        raise CmdError("E_UPDATE", "invalid bundle file")
+    return _schedule_update([real], {"action": "install", "bundle": os.path.basename(real),
+                                    "message": "更新包已接收，等待校验"})
+
+
+def cmd_update_rollback(_s, a):
+    if not isinstance(a, dict) or a.get("confirm") != "ROLLBACK":
+        raise CmdError("E_CONFIRM", 'confirm must be "ROLLBACK"')
+    if not os.path.islink("/opt/bt-remote/previous") or not os.path.exists("/opt/bt-remote/previous"):
+        raise CmdError("E_UPDATE", "no previous release is available")
+    return _schedule_update(["--rollback"], {"action": "rollback",
+                            "message": "正在准备切回上一版"})
 
 
 # ------------------------------------------------------------------ proxy.*
@@ -2998,6 +3177,9 @@ COMMANDS = {
     "file.list": cmd_file_list,
     "file.stat": cmd_file_stat,
     "file.read": cmd_file_read,
+    "file.download.begin": cmd_file_download_begin,
+    "file.download.chunk": cmd_file_download_chunk,
+    "file.download.end": cmd_file_download_end,
     "file.hash": cmd_file_hash,
     "file.mkdir": cmd_file_mkdir,
     "file.copy": cmd_file_copy,
@@ -3007,6 +3189,9 @@ COMMANDS = {
     "file.upload.chunk": cmd_file_upload_chunk,
     "file.upload.commit": cmd_file_upload_commit,
     "file.upload.abort": cmd_file_upload_abort,
+    "update.status": cmd_update_status,
+    "update.apply": cmd_update_apply,
+    "update.rollback": cmd_update_rollback,
     "proxy.status": cmd_proxy_status,
     "proxy.groups": cmd_proxy_groups,
     "proxy.nodes": cmd_proxy_nodes,
@@ -3058,6 +3243,7 @@ class Session(threading.Thread):
         self.terms = {}
         self.job_queue = queue.Queue(maxsize=32)
         self.file_uploads = {}
+        self.file_downloads = {}
 
     # ---------------- 发送
     def send(self, obj):
@@ -3137,7 +3323,7 @@ class Session(threading.Thread):
                 self.authed = True
                 with Session._lock:
                     Session._fail.pop(self.peer, None)
-                self.send({"t": "auth", "ok": True, "caps": CAPS})
+                self.send(dict({"t": "auth", "ok": True, "caps": CAPS}, **gateway_meta()))
                 log("auth ok: %s" % self.peer)
                 return True
             fails = self.bad_token()
@@ -3240,9 +3426,9 @@ class Session(threading.Thread):
         log("session start %s (local=%s)" % (self.peer, self.local))
         threading.Thread(target=self.pusher, daemon=True).start()
         try:
-            self.send({"t": "hello", "ver": VER, "dev": DEV_ID,
+            self.send(dict({"t": "hello", "dev": DEV_ID,
                        "name": DEV_NAME, "auth": "required", "term_protocol": TERM_PROTOCOL,
-                       "term_protocols": [TERM_PROTOCOL, TERM_MUX_PROTOCOL]})
+                       "term_protocols": [TERM_PROTOCOL, TERM_MUX_PROTOCOL]}, **gateway_meta()))
             if not self.authenticate():
                 self.close()
                 return
@@ -3608,6 +3794,8 @@ class Session(threading.Thread):
         self.log_follow_stop()
         for upload_id in list(self.file_uploads):
             _file_upload_drop(self, upload_id)
+        for download_id in list(self.file_downloads):
+            _file_download_drop(self, download_id)
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:

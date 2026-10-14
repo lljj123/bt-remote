@@ -8,12 +8,14 @@ import socket
 import subprocess
 import sys
 import time
+import shutil
 
 UNITS = ["bt-gateway.service", "bt-connectable.timer"]
 REMOVE = ["/usr/local/bin/bt-gateway", "/usr/local/bin/bt-pair", "/usr/local/bin/bt-connectable",
           "/usr/share/doc/bt-remote/LICENSE", "/usr/share/doc/bt-remote/NOTICE",
           "/usr/share/doc/bt-remote/THIRD_PARTY_NOTICES.md",
-          "/usr/local/bin/bt-remote", "/etc/systemd/system/bt-gateway.service",
+          "/usr/local/bin/bt-remote", "/usr/local/bin/bt-remote-apply-update",
+          "/etc/systemd/system/bt-gateway.service",
           "/etc/systemd/system/bt-connectable.service", "/etc/systemd/system/bt-connectable.timer"]
 
 
@@ -47,7 +49,7 @@ def healthcheck():
                     if msg.get("ok") is not True:
                         raise RuntimeError("Local gateway authentication failed")
                     caps = msg.get("caps") or []
-                    required = {"term", "proxy", "file", "device", "multiwifi"}
+                    required = {"term", "proxy", "file", "device", "multiwifi", "update"}
                     missing = sorted(required.difference(caps))
                     if missing:
                         raise RuntimeError("Gateway is outdated; missing capabilities: " + ",".join(missing))
@@ -73,7 +75,7 @@ def healthcheck():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "doctor", "pair", "token", "uninstall"])
+    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "doctor", "version", "pair", "token", "uninstall"])
     parser.add_argument("args", nargs="*")
     options = parser.parse_args(argv)
     action = options.action
@@ -115,6 +117,14 @@ def main(argv=None):
             failures.append(str(error))
         for failure in failures: print("FAIL:", failure)
         return 1 if failures else 0
+    elif action == "version":
+        current = Path("/opt/bt-remote/current")
+        previous = Path("/opt/bt-remote/previous")
+        print("current:", current.resolve().name if current.exists() else "legacy")
+        print("previous:", previous.resolve().name if previous.exists() else "none")
+        status = Path("/var/lib/bt-gateway/update-status.json")
+        if status.is_file():
+            print("update:", status.read_text(encoding="utf-8").strip())
     elif action == "uninstall":
         require_root()
         if Path("/run/bt-gateway/wifi-switch-flag").exists():
@@ -124,6 +134,7 @@ def main(argv=None):
         for name in REMOVE:
             path = Path(name)
             if path.is_file() or path.is_symlink(): path.unlink()
+        shutil.rmtree("/opt/bt-remote", ignore_errors=True)
         execute(["systemctl", "daemon-reload"])
         print("Removed gateway binaries/units. Preserved /etc/bt-gateway, WiFi, Bluetooth pairing and BlueZ.")
     return 0

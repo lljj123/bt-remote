@@ -5,5 +5,5 @@ Wants=bluetooth.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/bt-connectable
+ExecStart=/opt/bt-remote/current/bin/bt-connectable
 TimeoutStartSec=45

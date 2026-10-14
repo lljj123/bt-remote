@@ -3,10 +3,11 @@
 本文只描述 v1 基础协议之上的新增命令。传输仍为 UTF-8 NDJSON，认证、
 4096 字节帧上限、响应 `id` 匹配和 `escaped-v1` 终端相位均保持不变。
 
-认证成功后的 `caps` 包括 `proxy`、`file`、`device` 和 `storage`：
+`hello` 和认证成功响应都带网关语义版本、构建号、兼容协议范围及按功能划分的版本；
+旧客户端可继续只读取 `ver/caps`：
 
 ```json
-{"t":"auth","ok":true,"caps":["sys","svc","net","pwr","log","term","proxy","file","device","storage","multiwifi"]}
+{"t":"auth","ok":true,"ver":2,"gateway_version":"2.0.0","build":"20261014","protocol_min":1,"protocol_max":2,"features":{"term":2,"file":2,"update":1},"caps":["sys","svc","net","pwr","log","term","proxy","file","device","storage","multiwifi","update"]}
 ```
 
 ## 单次通用命令
@@ -147,7 +148,8 @@ eMMC 的 boot/RPMB 节点和 zram/ram 压缩交换设备不会作为存储盘返
 
 ## App 内文件管理
 
-`file.caps` 返回文件能力、1536 字节分块上限、最大传输大小和文本预览上限。
+`file.caps` 返回兼容的 `stopwait-v1`（1536 字节）以及 `window-v2`（默认每块
+2560 字节、4 个在途请求）、最大传输大小和文本预览上限。
 所有路径必须是绝对路径；该接口与 root 终端权限相同，不限制在某个目录内。
 
 目录和普通操作：
@@ -165,11 +167,26 @@ eMMC 的 boot/RPMB 节点和 zram/ram 压缩交换设备不会作为存储盘返
 上传为同目录临时文件加原子提交：
 
 ```json
-{"name":"file.upload.begin","args":{"path":"/root/a.bin","size":2048,"overwrite":false}}
+{"name":"file.upload.begin","args":{"path":"/root/a.bin","size":2048,"overwrite":false,"protocol":"window-v2"}}
 {"name":"file.upload.chunk","args":{"upload_id":"...","offset":0,"data_b64":"..."}}
 {"name":"file.upload.commit","args":{"upload_id":"...","sha256":"..."}}
 ```
 
-偏移必须严格连续，单块不超过 1536 字节。`commit` 只有在声明大小完整且可选
+`window-v2` 上传偏移仍严格连续，但客户端可先发送服务端返回的 `window_chunks` 个
+请求再集中等待响应；单块不超过服务端返回的 `chunk_bytes`。下载用
+`file.download.begin/chunk/end` 固定一次打开的文件句柄，chunk 请求可采用相同窗口。
+旧客户端的 `file.read` 与 1536 字节限制保持不变。`commit` 只有在声明大小完整且可选
 SHA256 一致时才用 `os.replace` 发布目标文件。断线或 `file.upload.abort` 会删除临时文件。
 文件错误码为 `E_FILE_ARGS/EXISTS/HASH/IO/NOTFOUND/OFFSET/PERM/SIZE/STATE/TYPE`。
+
+## 网关原子升级
+
+- `update.status {}`：返回当前版本目录、最近一次升级状态和是否可回滚。
+- `update.apply {"path":"/var/lib/bt-gateway/incoming/a.btbundle","confirm":"UPDATE"}`：
+  只接受经当前鉴权连接上传到 incoming 目录的更新包。
+- `update.rollback {"confirm":"ROLLBACK"}`：切换到 `previous`，失败则恢复原版本。
+
+`.btbundle` 内的清单列出所有文件 SHA256。若板端存在
+`/etc/bt-gateway/update-public.pem`，更新助手还会强制验证 `manifest.sig` 的 Ed25519
+签名。安装文件先写入 `/opt/bt-remote/releases/<release-id>`，再原子切换
+`/opt/bt-remote/current`；启动后执行本地 socket 鉴权和功能探测，失败自动切回上一版。

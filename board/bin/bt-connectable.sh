@@ -4,15 +4,17 @@
 set -u
 exec 9>/run/bt-connectable.lock
 flock -n 9 || exit 0
-state() { timeout 8 btmgmt --index 0 info 2>/dev/null | grep -m1 'current settings'; }
-has_conn() { grep -qE '(^|[[:space:]])connectable([[:space:]]|$)' <<< "$1"; }
-S=$(state)
-if has_conn "$S"; then exit 0; fi
-timeout 8 btmgmt --index 0 connectable on >/dev/null 2>&1 || true
-if has_conn "$(state)"; then
-    logger -t bt-connectable "connectable restored"
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+RESULT=$(timeout 12 python3 "$ROOT/bt-mgmt-mode.py" ensure-connectable 2>/dev/null)
+if [[ $? -eq 0 ]]; then
+    [[ "$RESULT" == changed ]] && logger -t bt-connectable "connectable/fast-connectable restored"
     exit 0
 fi
 timeout 5 hciconfig hci0 pscan >/dev/null 2>&1 || true
+RESULT=$(timeout 12 python3 "$ROOT/bt-mgmt-mode.py" ensure-connectable 2>/dev/null)
+if [[ $? -eq 0 ]]; then
+    logger -t bt-connectable "connectable/fast-connectable restored after hciconfig fallback"
+    exit 0
+fi
 logger -t bt-connectable "connectable not confirmed; retry on next timer tick"
 exit 1
