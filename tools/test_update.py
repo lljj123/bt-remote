@@ -22,7 +22,7 @@ class UpdateBundleTests(unittest.TestCase):
             with mock.patch.object(apply_update, "STATE", root / "status.json"), \
                     mock.patch.object(apply_update, "PUBLIC_KEY", root / "missing-public.pem"):
                 manifest, signed = apply_update.verify_and_extract(bundle, root / "extract")
-            self.assertEqual(manifest["gateway_version"], "2.0.1")
+            self.assertEqual(manifest["gateway_version"], "2.0.2")
             self.assertFalse(signed)
             self.assertTrue((root / "extract/tools/install_gateway.py").is_file())
 

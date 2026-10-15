@@ -71,7 +71,7 @@ def main():
         peer = Peer(sock)
         hello = peer.line()
         assert hello.get("term_protocol") == "escaped-v1"
-        assert hello.get("gateway_version") == "2.0.1", hello
+        assert hello.get("gateway_version") == "2.0.2", hello
         assert hello.get("protocol_min") == 1 and hello.get("protocol_max") == 2, hello
         peer.send({"t": "auth", "token": token})
         auth = peer.line()
@@ -88,7 +88,7 @@ def main():
         print("PASS: file manager window-v2 capability")
         peer.send({"t": "cmd", "id": 97, "name": "update.status", "args": {}})
         update = peer.response(97)["data"]
-        assert update.get("gateway_version") == "2.0.1", update
+        assert update.get("gateway_version") == "2.0.2", update
         print("PASS: versioned update capability")
         peer.send({"t": "cmd", "id": 98, "name": "device.usb.list",
                    "args": {"offset": 0, "limit": 1}})

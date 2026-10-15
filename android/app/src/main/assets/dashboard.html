@@ -2549,7 +2549,7 @@ let rawOn = false;                 // 仅保留旧版 escaped-v1 断线兼容
 function resetShell() {
   rawOn = false;
   terminalTabs.forEach(tab => {
-    tab.sid = null; tab.state = "idle"; tab.removeAfterExit = false;
+    tab.sid = null; tab.state = "idle"; tab.removeAfterExit = false; tab.closeAfterStart = false;
     tab.inputTail = Promise.resolve(); resetTermWriteQueue(tab);
   });
   shellStarting = false;
@@ -2638,7 +2638,7 @@ function createTerminalTab(startNow) {
   }
   const tab = { key: "term-" + (++terminalCounter), title: "终端 " + terminalCounter,
     sid: null, state: "idle", writeQueue: [], writeBusy: false, writeEpoch: 0,
-    inputTail: Promise.resolve(), removeAfterExit: false, demoLine: "" };
+    inputTail: Promise.resolve(), removeAfterExit: false, closeAfterStart: false, demoLine: "" };
   const pane = document.createElement("div");
   pane.className = "term-pane";
   pane.dataset.termKey = tab.key;
@@ -2762,18 +2762,18 @@ function handleTermEvent(name, data) {
   }
   if (!tab) return;
   if (name === "term.ready") {
-    tab.state = "running";
+    tab.state = (tab.removeAfterExit || tab.closeAfterStart) ? "closing" : "running";
     shellStarting = terminalTabs.some(item => item.state === "starting");
     shNote("");
     if (tab.key === activeTermKey) {
-      ttyState("已就绪");
-      try { tab.term.focus(); } catch (e) { }
+      ttyState(tab.state === "closing" ? "正在结束…" : "已就绪");
+      if (tab.state !== "closing") try { tab.term.focus(); } catch (e) { }
     }
   } else if (name === "term.output") {
     try { queueTermWrite(b64ToU8(data.b64 || ""), tab); } catch (e) { }
   } else if (name === "term.exit") {
     const remove = tab.removeAfterExit;
-    tab.state = "idle"; tab.sid = null; tab.removeAfterExit = false;
+    tab.state = "idle"; tab.sid = null; tab.removeAfterExit = false; tab.closeAfterStart = false;
     tab.term.writeln("\r\n\x1b[2m[会话已结束，退出码 " + Number(data.code || 0) + "]\x1b[0m");
     if (remove) { finalizeTerminalTab(tab); return; }
     if (tab.key === activeTermKey) ttyState("会话已结束");
@@ -2942,6 +2942,8 @@ function buildKb() {
       b.dataset.k = k.t;
       b.textContent = k.t;
       b.onclick = () => {
+        /* 快捷键直接写入 PTY，不聚焦 xterm 的隐藏 textarea，避免弹出软键盘。 */
+        try { if (term) term.blur(); b.focus({ preventScroll: true }); } catch (e) { }
         if (k.sticky) {
           sticky = (sticky === k.sticky) ? null : k.sticky;
           paintSticky();
@@ -2949,9 +2951,8 @@ function buildKb() {
           return;
         }
         const tab = activeTerminalTab();
-        if (!tab || tab.state !== "running") { toast("先点「启动 Shell 会话」"); return; }
+        if (!tab || tab.state !== "running") { toast("请先启动终端"); return; }
         shellSendText(k.s);
-        try { term.focus(); } catch (e) { }
       };
       wrap.appendChild(b);
     });
@@ -2994,7 +2995,8 @@ function paintShellBtns() {
   b.disabled = !tab || active;
   b.textContent = tab && tab.state === "running" ? "运行中" :
     tab && tab.state === "starting" ? "启动中" : "启动";
-  $("#btnShClose").disabled = !tab || tab.state !== "running";
+  $("#btnShClose").disabled = !terminalTabs.some(item =>
+    item.state === "running" || item.state === "starting");
 }
 
 async function openShell(targetTab) {
@@ -3018,15 +3020,15 @@ async function openShell(targetTab) {
       shell: "/bin/bash", protocol: "json-mux-v1" }, 20000);
     tab.sid = result.sid || null;
     if (!tab.sid) throw new Error("板端没有返回终端会话 ID");
-    if (tab.removeAfterExit) {
+    if (tab.removeAfterExit || tab.closeAfterStart) {
       tab.state = "closing";
       send("term.close", { sid: tab.sid }).catch(e => {
-        tab.removeAfterExit = false; tab.state = "running";
+        tab.removeAfterExit = false; tab.closeAfterStart = false; tab.state = "running";
         renderTerminalTabs(); paintShellBtns(); toast("关闭失败：" + e.message);
       });
     } else if (tab.state === "starting") ttyState("正在接管…");
   } catch (e) {
-    tab.state = "idle"; tab.sid = null;
+    tab.state = "idle"; tab.sid = null; tab.closeAfterStart = false;
     ttyState("未启动");
     const m = String(e.message || "");
     shNote("启动失败：" + m);
@@ -3038,14 +3040,26 @@ async function openShell(targetTab) {
 }
 
 function closeShell() {
-  const tab = activeTerminalTab();
-  if (!tab || tab.state !== "running" || !tab.sid) { toast("当前没有会话"); return; }
-  if (!isNative) { demoSend(new TextEncoder().encode("exit\n"), tab); return; }
-  tab.state = "closing"; paintShellBtns(); renderTerminalTabs();
-  send("term.close", { sid: tab.sid }).catch(e => {
-    tab.state = "running"; paintShellBtns(); renderTerminalTabs(); toast("结束失败：" + e.message);
+  const targets = terminalTabs.filter(tab => tab.state === "running" || tab.state === "starting");
+  if (!targets.length) { toast("当前没有运行中的终端"); return; }
+  if (!isNative) {
+    targets.forEach(tab => demoSend(new TextEncoder().encode("exit\n"), tab));
+    toast("已结束全部终端");
+    return;
+  }
+  targets.forEach(tab => {
+    if (!tab.sid) {
+      tab.closeAfterStart = true;
+      return;
+    }
+    tab.state = "closing";
+    send("term.close", { sid: tab.sid }).catch(e => {
+      tab.closeAfterStart = false; tab.state = "running";
+      paintShellBtns(); renderTerminalTabs(); toast("结束失败：" + e.message);
+    });
   });
-  toast("已请求结束会话");
+  paintShellBtns(); renderTerminalTabs();
+  toast("已请求结束 " + targets.length + " 个终端");
 }
 
 $("#btnShStart").onclick = () => openShell();
@@ -3243,7 +3257,7 @@ function startDemo() {
 
     if (m.t === "auth") {
       feed(JSON.stringify({ t: "auth", ok: true, caps: ["sys", "svc", "net", "pwr", "log", "term", "proxy", "file", "device", "storage", "multiwifi", "update"],
-        gateway_version: "2.0.1", build: "demo", protocol_min: 1, protocol_max: 2 }));
+        gateway_version: "2.0.2", build: "demo", protocol_min: 1, protocol_max: 2 }));
       return;
     }
     const id = m.id;
@@ -3347,7 +3361,7 @@ function startDemo() {
       protocols: ["stopwait-v1", "window-v2"], window_chunk_bytes: 2560, window_chunks: 4,
       max_transfer_bytes: 1073741824, text_preview_bytes: 131072, atomic_upload: true, copy: true });
     if (m.name === "update.status") return ok({ state: "idle", message: "演示升级状态",
-      gateway_version: "2.0.1", build: "demo", release: "2.0.1-demo", rollback_available: true });
+      gateway_version: "2.0.2", build: "demo", release: "2.0.2-demo", rollback_available: true });
     if (m.name === "update.apply" || m.name === "update.rollback") return ok({ accepted: true, reconnect_after_s: 8 });
     if (m.name === "file.list") {
       const rows = m.args.path === "/root" ? [
@@ -3422,7 +3436,7 @@ return ok({});
   loadDevices();
 
   setInterval(() => paintBtTraffic(800 + Math.random() * 5000, 4000 + Math.random() * 18000), 1000);
-  feed(JSON.stringify({ t: "hello", ver: 2, gateway_version: "2.0.1", build: "demo", protocol_min: 1, protocol_max: 2,
+  feed(JSON.stringify({ t: "hello", ver: 2, gateway_version: "2.0.2", build: "demo", protocol_min: 1, protocol_max: 2,
     dev: "orangepi-3lts", name: "香橙派 3 LTS", auth: "required",
     term_protocol: "escaped-v1", term_protocols: ["escaped-v1", "json-mux-v1"] }));
 }

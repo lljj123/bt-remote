@@ -155,13 +155,12 @@ class GatewayCommandTests(unittest.TestCase):
         FakeMihomo.reloaded_payload = ""
 
     def test_bluetooth_rssi_reads_connected_classic_link(self):
-        output = ("Connection Information for 34:05:57:01:AE:C8 (BR/EDR)\n"
-                  "\tRSSI -42\tTX power -12\tmaximum TX power 0\n")
+        output = "RSSI return value: -42\n"
         with mock.patch.object(GATEWAY, "memo", side_effect=lambda _key, _ttl, fn: fn()), \
                 mock.patch.object(GATEWAY, "run", return_value=(0, output, "")) as runner:
             self.assertEqual(GATEWAY.bluetooth_rssi("34:05:57:01:AE:C8"), -42)
         runner.assert_called_once_with(
-            ["btmgmt", "conn-info", "34:05:57:01:AE:C8"], timeout=3)
+            ["hcitool", "rssi", "34:05:57:01:AE:C8"], timeout=3)
         with mock.patch.object(GATEWAY, "run") as runner:
             self.assertIsNone(GATEWAY.bluetooth_rssi("not-a-mac"))
             runner.assert_not_called()

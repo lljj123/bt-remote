@@ -95,7 +95,7 @@ SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb"
 SRV_NAME = "OrangePi 3LTS Gateway"
 
 VER = 2
-GATEWAY_VERSION = "2.0.1"
+GATEWAY_VERSION = "2.0.2"
 BUILD_ID = os.environ.get("BTG_BUILD_ID", "20261014")
 PROTOCOL_MIN = 1
 PROTOCOL_MAX = 2
@@ -740,21 +740,24 @@ def cmd_sys_info(_s, _a):
 
 
 def bluetooth_rssi(mac):
-    """Return the live BR/EDR link RSSI reported by BlueZ management."""
+    """Actively read the live BR/EDR RSSI from the HCI controller."""
     if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac):
         return None
 
     def _query():
-        rc, out, _err = run(["btmgmt", "conn-info", mac], timeout=3)
+        # btmgmt conn-info exposes a slowly refreshed cached RSSI. hcitool's
+        # rssi command issues HCI Read RSSI, so distance changes show up on the
+        # next metrics sample instead of several samples later.
+        rc, out, _err = run(["hcitool", "rssi", mac], timeout=3)
         if rc:
             return None
-        match = re.search(r"\bRSSI\s+(-?\d+)\b", out)
+        match = re.search(r"RSSI return value:\s*(-?\d+)\b", out)
         if not match:
             return None
         value = int(match.group(1))
         return value if -127 <= value <= 20 else None
 
-    return memo("bluetooth-rssi:" + mac, 3.0, _query)
+    return memo("bluetooth-rssi:" + mac, 0.75, _query)
 
 
 def build_metrics(peer=None):

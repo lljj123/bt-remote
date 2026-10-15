@@ -24,7 +24,7 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 建立 SPP 后交换 hello/auth，管理和终端消息都使用 NDJSON。`term.shell` 携带 `protocol: json-mux-v1`；输入、输出、缩放和关闭都带有独立 `sid`。App 可同时打开最多 4 个 PTY 选项卡，各自保留 xterm 缓冲区与状态，不会阻止卡片刷新；进入全屏后仍显示紧凑的多终端状态栏。
 
-解析器按连接隔离，断线或连接任务取消后旧线程不能覆盖新连接。原生 SPP 层每秒统计实际收发字节，网关从 BlueZ 当前连接读取 RSSI，顶部持续显示蓝牙信号及上传/下载速率。令牌使用 Android Keystore 加密存储，旧 localStorage 值在成功迁移后清除。
+解析器按连接隔离，断线或连接任务取消后旧线程不能覆盖新连接。原生 SPP 层每秒统计实际收发字节，网关通过 HCI 主动读取当前连接的 RSSI，顶部持续显示蓝牙信号及上传/下载速率。令牌使用 Android Keystore 加密存储，旧 localStorage 值在成功迁移后清除。
 
 概览页不显示额外的“自定义系统信息”和网络接口卡片；通用 `term.exec` 仍可从协议台调用。“服务”页只保留代理与电源/RTC：代理卡片调用 `proxy.status/switch/mode/onoff/tun` 和 `proxy.sub.*`，可保存并应用 Mihomo/Clash proxy-provider 订阅，选择框只显示机场名称；关闭代理只切换直连模式，不清除订阅或节点。TUN 透明代理有独立开关，开启时创建 Mihomo 虚拟网卡并让板端程序自动经过代理，关闭后移除虚拟网卡，界面会明确提示 ICMP ping 不经过显式代理端口。需要板端配置 mihomo external-controller 与配置文件路径。
 
@@ -34,7 +34,7 @@ Gradle Wrapper 固定为 8.7，首次运行需要下载 Gradle 与依赖。APK �
 
 “网络”页通过 `net.ifaces` 枚举全部网卡，可选择板载或 USB 无线接口，再将 `iface` 传给 `net.wifi.status/scan/saved/connect/forget`。“外设”页通过分页的 `device.usb.list` 显示 USB 设备、驱动及其网卡/磁盘/串口节点，不需要 Android USB 权限，因为枚举发生在板端。
 
-终端输出在原生层合帧，进入页面后再按 xterm 写入完成回调逐帧消费，避免大量输出长期占用 WebView 主线程。移动端复制使用“选择”模式拖动后点击“复制”；“全选”和“粘贴”通过 Android `ClipboardManager` 桥接，不依赖 `file://` 页面剪贴板权限。
+终端输出在原生层合帧，进入页面后再按 xterm 写入完成回调逐帧消费，避免大量输出长期占用 WebView 主线程。移动端复制使用“选择”模式拖动后点击“复制”；“全选”和“粘贴”通过 Android `ClipboardManager` 桥接，不依赖 `file://` 页面剪贴板权限。快捷键直接写入 PTY 且不会聚焦软键盘；标题栏“结束”会关闭全部运行中的终端，单个标签上的 × 只关闭对应终端。
 
 ## 许可证
 
